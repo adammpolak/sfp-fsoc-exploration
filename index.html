@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FSOC SFP Simulator</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand">FSOC SFP Simulator</div>
+      <div class="controls">
+        <label>Bitrate
+          <select id="bitrate">
+            <option value="0.1">100 Mb/s</option>
+            <option value="1" selected>1 Gb/s</option>
+            <option value="10">10 Gb/s</option>
+          </select>
+        </label>
+        <label>Wavelength (nm)
+          <input id="wavelength" type="number" value="1550">
+        </label>
+        <label>Target BER
+          <input id="targetBer" type="number" step="1e-12" value="1e-12">
+        </label>
+        <label>Weather
+          <select id="weather">
+            <option value="clear">Clear</option>
+            <option value="haze">Haze</option>
+            <option value="light_fog">Light Fog</option>
+            <option value="heavy_fog">Heavy Fog</option>
+          </select>
+        </label>
+        <label>Wind (m/s)
+          <input id="windMps" type="number" step="0.5" value="5">
+        </label>
+        <label>Jitter Max (Hz)
+          <input id="jitterMaxHz" type="number" step="1" value="1000">
+        </label>
+        <label>PSD Low (mrad²/Hz)
+          <input id="psdLow" type="number" step="0.0001" value="0.0001">
+        </label>
+        <label>PSD High (mrad²/Hz)
+          <input id="psdHigh" type="number" step="0.0001" value="0.00005">
+        </label>
+        <label>Split Hz
+          <input id="psdSplitHz" type="number" step="1" value="100">
+        </label>
+        <label>Alignment
+          <select id="alignmentMode">
+            <option value="dual_lambda">Dual-λ</option>
+            <option value="pilot">Pilot</option>
+            <option value="retroreflector">Retroreflector</option>
+            <option value="imaging">Imaging</option>
+          </select>
+        </label>
+        <label>Align λ (nm)
+          <input id="alignWavelength" type="number" value="1310">
+        </label>
+        <button id="importBtn">Import</button>
+        <button id="exportBtn">Export</button>
+        <button id="resetBtn">Reset</button>
+        <button id="resetModelsBtn">Reset Models</button>
+        <label>Auto Update
+          <input id="autoUpdate" type="checkbox" checked>
+        </label>
+        <button id="runBtn">Run</button>
+      </div>
+    </header>
+    <main class="layout">
+      <aside class="sidebar left">
+        <h3>Parts</h3>
+        <input id="searchParts" placeholder="Search components">
+        <div id="partsList"></div>
+      </aside>
+      <section class="canvas">
+        <svg id="beamCanvas" preserveAspectRatio="xMidYMid meet"></svg>
+      </section>
+      <aside class="sidebar right">
+        <h3>Properties</h3>
+        <div id="inspector"></div>
+      </aside>
+    </main>
+    <footer class="metrics">
+      <div id="kpis"></div>
+      <div class="plots">
+        <div id="prxPlot"></div>
+        <div id="berPlot"></div>
+      </div>
+    </footer>
+    <script src="js/calc/turbulence.js"></script>
+    <script src="js/calc/pointing.js"></script>
+    <script src="js/calc/ber.js"></script>
+    <script src="js/calc/control.js"></script>
+    <script src="js/calc/evaluator.js"></script>
+    <script src="components.db.js"></script>
+    <script src="app.js"></script>
+  </body>
+  </html>
+
+

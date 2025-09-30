@@ -54,6 +54,7 @@ Beam divergence θ, spot size, geometric loss 1/(R²), atmospheric attenuation �
 * Exploring lenses (MEMs, plastic Fresnel lens, more) [chapter_21.md](chapter_21.md)
 * Exploring increasing FSOC receiving size (multiple photodetectors, multiple ROSA's, 1 photodetector for data, array of detectors for signal and auto alignment, parallel photodiode arrays vs. single‐large‐aperture design, etc) [chapter_22.md](chapter_22.md)
 * Exploring using SFP Experimenter boards to extract TOSA/ROSA or modulate or create a prototype [chapter_23.md](chapter_23.md).
+* Dual‑channel FSOC: primary data + alignment telemetry (dual‑λ or pilot subcarriers) for closed‑loop auto‑align using servo/FS mirrors [chapter_23.md](chapter_23.md)
 
 ---
 

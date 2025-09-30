@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FSOC Components Database",
+  "type": "object",
+  "required": ["schema_version", "categories"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "categories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "models"],
+        "properties": {
+          "type": { "type": "string" },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": { "type": "string" },
+                "vendor": { "type": "string" },
+                "cost_usd": { "type": "number" },
+                "weight_g": { "type": "number" },
+                "power_w": { "type": "number" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+
+

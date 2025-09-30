@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FSOC Configuration",
+  "type": "object",
+  "required": ["schema_version", "global", "channel", "topology", "components"],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "global": {
+      "type": "object",
+      "required": ["bitrate_gbps", "wavelength_nm", "target_ber", "weather", "distance_m"],
+      "properties": {
+        "bitrate_gbps": { "type": "number" },
+        "wavelength_nm": { "type": "number" },
+        "target_ber": { "type": "number" },
+        "weather": { "type": "string" },
+        "distance_m": { "type": "number" },
+        "fec_model": { "type": "string" },
+        "alignment_mode": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "channel": {
+      "type": "object",
+      "required": ["atmospheric_alpha_db_per_km", "Cn2", "pointing_jitter_mrad_rms"],
+      "properties": {
+        "atmospheric_alpha_db_per_km": { "type": "number" },
+        "Cn2": { "type": "number" },
+        "pointing_jitter_mrad_rms": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "topology": {
+      "type": "object",
+      "required": ["tx", "rx"],
+      "properties": {
+        "tx": { "type": "array", "items": { "type": "string" } },
+        "rx": { "type": "array", "items": { "type": "string" } },
+        "align_tx": { "type": "array", "items": { "type": "string" } },
+        "align_rx": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "overrides": { "type": "object" }
+  },
+  "additionalProperties": false
+}
+
+
