@@ -45,6 +45,21 @@ FSM / Gimbals / Actuators
 - Optotune FSM/beam steering: https://www.optotune.com
 - New Scale Technologies Miniature Gimbals: https://www.newscaletech.com
 
+Receiver Arrays / Combiners / Optomechanics
+
+- Luminit / Fresnel Technologies custom Fresnel lens arrays: https://www.fresneltech.com
+- Jenoptik refractive array modules: https://www.jenoptik.com
+- LightPath multi-element lens stacks: https://lightpath.com/
+- Thorlabs Fiber Array Packages & combiners: https://www.thorlabs.com/navigation.cfm?guide_id=144
+- Gooch & Housego fused coupler trees: https://goochandhousego.com
+- New Focus / Newport precision kinematic mounts: https://www.newport.com
+
+Filters / Windows / Baffles
+
+- Thorlabs OD and solar filters: https://www.thorlabs.com/navigation.cfm?guide_id=221
+- Edmund Optics field stops & apertures: https://www.edmundoptics.com/c/apertures-stops/1192/
+- Knight Optical optical windows and coatings: https://www.knightoptical.com
+
 Curated top picks (seeded in components.db.json)
 
 - TOSA DFB 1550 (Lumentum): target +3 dBm OMA, ER ~10 dB, 1/10G, APC, MPD

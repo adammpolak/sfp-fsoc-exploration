@@ -74,19 +74,33 @@
         <div id="partsList"></div>
       </aside>
       <section class="canvas">
+        <div id="canvasGuide">
+          <p>Left: transmitter blocks. Middle: channel effects. Right: receiver blocks. Blue width shows beam divergence. Markers on the axis show current distance (blue) and computed max reach (red).</p>
+        </div>
         <svg id="beamCanvas" preserveAspectRatio="xMidYMid meet"></svg>
       </section>
       <aside class="sidebar right">
-        <h3>Properties</h3>
-        <div id="inspector"></div>
+        <div class="props-section">
+          <h3>Properties</h3>
+          <div id="warnings"></div>
+          <div id="inspector"></div>
+        </div>
+        <div id="maxReachExplain" class="summary-panel"></div>
       </aside>
     </main>
     <footer class="metrics">
       <div id="kpis"></div>
       <div class="plots">
-        <div id="prxPlot"></div>
-        <div id="berPlot"></div>
+        <div class="plot-card">
+          <h4>Received Power vs Distance</h4>
+          <div id="prxPlot" class="plot-area"></div>
+        </div>
+        <div class="plot-card">
+          <h4>BER vs Distance</h4>
+          <div id="berPlot" class="plot-area"></div>
+        </div>
       </div>
+      <div id="stageBreakdown" class="summary-panel"></div>
     </footer>
     <script src="js/calc/turbulence.js"></script>
     <script src="js/calc/pointing.js"></script>

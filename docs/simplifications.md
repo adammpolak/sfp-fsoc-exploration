@@ -3,9 +3,9 @@ FSOC Simulator Simplifications and Planned Upgrades
 Scope of current models (v0.1)
 
 - Beam model: Far-field Gaussian with linear growth w(R) ≈ θ·R. Planned: near-field/Rayleigh range, M², beam shaping.
-- Geometric capture: Envelope/area ratio with AoA ellipse factor and array-level penalties. Planned: per-element Gaussian–aperture integral.
+- Geometric capture: Envelope/area ratio with AoA ellipse factor, per-λ efficiency, combiner IL, and residual pointing integration. Planned: per-element Gaussian–aperture integral.
 - Atmosphere: Scalar dB/km preset; Rytov-based scintillation margin. Planned: Kim/Kruse visibility mapping UI, aperture averaging.
-- Pointing: RMS jitter + mispointing loss; PSD split model for gimbal/FSM. Planned: full PSD integration, closed-loop transfer functions, delays.
+- Pointing: RMS jitter + PSD split (low/high band) tied to Greenwood frequency for gimbal/FSM targets. Planned: full PSD integration, closed-loop transfer functions, delays.
 - Receiver sensitivity: Table/heuristic per bitrate. Planned: noise-equation driven (shot/thermal/amp), OMA and ER per chain.
 - Alignment: Dual-λ and pilot gating; simple broadband checks. Planned: explicit alignment path efficiency and SNR models.
 - Optics IL: Aggregated IL with combiner stages for arrays. Planned: wavelength/temperature dependent IL by part.

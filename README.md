@@ -1,4 +1,4 @@
-FSOC SFP Simulator — Static Web App (Spec & Roadmap)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              FSOC SFP Simulator — Static Web App (Spec & Roadmap)
 
 Project goal
 
@@ -22,11 +22,21 @@ Constraints and scope (v1)
 
 User experience (UX)
 
-- Canvas: center stage visual beam path with distance scale and beam envelope; nodes for each component show local gain/loss and tooltips.
-- Left sidebar (Parts): searchable palette of components by category and bit‑rate compatibility; “Add” swaps into an auto‑connected baseline topology to avoid incomplete states.
-- Right sidebar (Inspector): properties editor for selected component; shows supported bitrates, limits, and warnings.
-- Bottom metrics panel: live KPIs (cost, weight, power, max distance, link margin at selected distance, BER, pointing accuracy required, gimbal/FSM requirements, tolerance budgets) plus plots (P_rx vs distance, BER vs distance).
-- Top toolbar: global settings (bitrate 100 Mb/s, 1 Gb/s, 10 Gb/s; target BER; weather preset), import/export JSON, reset, unit preferences.
+- Canvas: center-stage beam path with transmitter columns on the left, free-space channel cards in the middle, and receiver columns on the right. Nodes show gain/loss badges, tooltips, and stay vertically aligned with their launch/receive counterparts.
+- Left sidebar (Parts): hierarchical palette with category headers and tooltips. Selecting a model hot-swaps it into the baseline topology; incompatible items are disabled with explanations.
+- Right sidebar (Properties + Max Distance Explained): inspector inputs for editable models, warnings, and a narrative breakdown of why the max reach is what it is. A “Revert to defaults” button restores per-component seeds.
+- Canvas interactivity: zoom (scroll), pan (drag), reset (double-click). Hovering reveals tooltips; clicking focuses the inspector. Default view provides left/right padding so both TX and RX stacks are visible even when max reach is short.
+- Bottom metrics panel: live KPIs (cost, weight, power, max distance, link margin, BER pre/post-FEC, pointing residuals, actuator bandwidth targets) plus `P_rx` and BER plots versus distance.
+- Top toolbar: global settings (bitrate 100 Mb/s / 1 Gb/s / 10 Gb/s, target BER, weather preset), PSD/jitter inputs, alignment mode, import/export JSON, auto-update toggle, run button, wind speed, and “Reset Models”.
+
+Canvas semantics & visualization details
+
+- Distance axis: spans all configurations with markers for current distance (blue) and computed max reach (red). The numeric labels show kilometers derived from the solver, even when the physical spacing is fixed on screen.
+- Transmitter cluster: anchored so the right edge of the TX stack sits on the zero tick. Cards stack vertically with consistent spacing; gain/loss tags sit top-right.
+- Receiver cluster: anchored so the left edge of the RX stack sits on the computed max-reach tick. When the system cannot close the link (`maxReach = 0`), TX and RX remain visible with a compressed gap and a red “0 km” marker.
+- Beam envelope: blue polygon drawn above the channel panel, showing divergence between TX and RX anchors. Width scales with evaluated divergence and target distance.
+- Receiver capture graphic: semi-transparent circle sized to the effective receiver footprint (objective or array envelope). The label reports the aperture or array diameter so users can see how well the beam fits the optics.
+- Gain/loss chain: stage cards in the channel column list atmospheric, scintillation, pointing, and geometric contributions with instantaneous power progression.
 
 High‑level architecture
 
@@ -394,8 +404,9 @@ Bandwidth ↔ sensitivity and BER
 
 Max distance and margin
 
-- Max distance at target BER: solve for L where P_rx_dbm(L) − P_min_dbm(ber_target) − margins = 0.
+- Max distance at target BER: perform a coarse sweep to bracket the last span that meets the target, then binary-search between the last passing and first failing distance until convergence (meter-level). If no sample passes, report 0 km and surface the dominant loss terms.
 - Report link margin at selected L: M_db = P_rx_dbm(L) − P_min_dbm.
+- “Max Distance Explained” panel mirrors the solver’s inputs: transmit power, total insertion, atmospheric + scintillation + pointing losses, geometric gain, received power, sensitivity, and resulting margin.
 
 Control dynamics (alignment channel)
 

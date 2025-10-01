@@ -14,12 +14,12 @@ window.COMPONENTS_DB = {
       {"id": "real-thorlabs-io-3-1550", "vendor": "Thorlabs", "isolation_db": 35, "il_db": 0.6, "lambda_min_nm": 1500, "lambda_max_nm": 1600, "connector": "FC/APC", "source_url": "https://www.thorlabs.com"}
     ]},
     {"type": "aspheric_collimator", "models": [
-      {"id": "asp-4.5mm-1550", "focal_length_mm": 4.5, "na": 0.5, "ar_wavelength_nm": 1550, "residual_divergence_mrad": 2.0, "il_db": 0.3},
-      {"id": "real-thorlabs-f240fc-1550", "vendor": "Thorlabs", "focal_length_mm": 8.0, "na": 0.49, "ar_wavelength_nm": 1550, "residual_divergence_mrad": 0.5, "il_db": 0.3, "aperture_mm": 5.9, "source_url": "https://www.thorlabs.com"}
+      {"id": "asp-4.5mm-1550", "focal_length_mm": 4.5, "na": 0.5, "ar_wavelength_nm": 1550, "residual_divergence_mrad": 2.0, "il_db": 0.3, "dual_lambda_ok": true},
+      {"id": "real-thorlabs-f240fc-1550", "vendor": "Thorlabs", "focal_length_mm": 8.0, "na": 0.49, "ar_wavelength_nm": 1550, "residual_divergence_mrad": 0.5, "il_db": 0.3, "aperture_mm": 5.9, "dual_lambda_ok": true, "source_url": "https://www.thorlabs.com"}
     ]},
     {"type": "grin_collimator", "models": [
-      {"id": "grin-0.25pitch-1.8mm", "pitch": 0.25, "diameter_mm": 1.8, "working_distance_mm": 4.5, "residual_divergence_mrad": 3.0, "il_db": 0.5},
-      {"id": "real-thorlabs-grin-1p8-0p23", "vendor": "Thorlabs", "pitch": 0.23, "diameter_mm": 1.8, "working_distance_mm": 0.5, "residual_divergence_mrad": 2.0, "il_db": 0.5, "ar_center_nm": 1550, "source_url": "https://www.thorlabs.com"}
+      {"id": "grin-0.25pitch-1.8mm", "pitch": 0.25, "diameter_mm": 1.8, "working_distance_mm": 4.5, "residual_divergence_mrad": 3.0, "il_db": 0.5, "dual_lambda_ok": true},
+      {"id": "real-thorlabs-grin-1p8-0p23", "vendor": "Thorlabs", "pitch": 0.23, "diameter_mm": 1.8, "working_distance_mm": 0.5, "residual_divergence_mrad": 2.0, "il_db": 0.5, "ar_center_nm": 1550, "dual_lambda_ok": true, "source_url": "https://www.thorlabs.com"}
     ]},
     {"type": "tx_telescope", "models": [
       {"id": "tx-tel-5x-20mm", "aperture_mm": 20, "magnification": 5, "residual_divergence_mrad": 0.2, "throughput": 0.9}
@@ -52,7 +52,7 @@ window.COMPONENTS_DB = {
       {"id": "pilot-inj-1pct", "depth_percent_max": 1.0, "tones": [1000,2000]}
     ]},
     {"type": "pilot_demod", "models": [
-      {"id": "pilot-demod-2khz", "bandwidth_hz": 3000, "noise_v_sqrtHz": 1e-9}
+      {"id": "pilot-demod-2khz", "bandwidth_hz": 3000, "noise_v_sqrtHz": 1e-9, "tool_tip": "Demodulates pilot tone for alignment."}
     ]},
     {"type": "interference_filter", "models": [
       {"id": "if-1550-3nm", "center_nm": 1550, "fwhm_nm": 3, "il_db": 0.6},
@@ -103,11 +103,11 @@ window.COMPONENTS_DB = {
       {"id": "ebo-mini", "beam_diameter_mm": 1.0, "divergence_mrad": 2.0, "il_db": 1.0, "rl_db": 35}
     ]},
     {"type": "laser_driver", "models": [{"id": "drv-abc123", "vendor": "ExampleCo", "bitrate_gbps_max": 10, "power_w": 0.4, "cost_usd": 12, "weight_g": 1.2}]},
-    {"type": "tosa", "models": [{"id": "tosa-1550-0dbm", "wavelength_nm": 1550, "optical_power_dbm": 0, "supports_bitrates": [0.1, 1, 10], "power_w": 0.2, "cost_usd": 50, "weight_g": 1.8}]},
-    {"type": "collimator", "models": [{"id": "col-grin-2mm", "aperture_mm": 2.0, "output_divergence_mrad": 5.0, "insertion_loss_db": 0.7, "power_w": 0, "cost_usd": 30, "weight_g": 1.0}]},
-    {"type": "beam_expander", "models": [{"id": "exp-5x-mini", "magnification": 5, "residual_divergence_mrad": 0.5, "insertion_loss_db": 0.5, "cost_usd": 80, "weight_g": 8}]},
-    {"type": "filter_dichroic", "models": [{"id": "dich-1310-1550", "lambda_pass_nm": 1310, "lambda_reflect_nm": 1550, "il_pass_db": 0.3, "il_reflect_db": 0.3, "cost_usd": 40, "weight_g": 2}]},
-    {"type": "tap_splitter", "models": [{"id": "tap-95-5", "ratio_main": 0.95, "ratio_tap": 0.05, "il_db": 0.5, "cost_usd": 20, "weight_g": 1.5}]},
+    {"type": "tosa", "models": [{"id": "tosa-1550-0dbm", "wavelength_nm": 1550, "optical_power_dbm": 0, "supports_bitrates": [0.1, 1, 10], "power_w": 0.2, "cost_usd": 50, "weight_g": 1.8, "tool_tip": "DFB-based TOSA with 0 dBm launch."}]},
+    {"type": "collimator", "models": [{"id": "col-grin-2mm", "aperture_mm": 2.0, "output_divergence_mrad": 5.0, "insertion_loss_db": 0.7, "power_w": 0, "cost_usd": 30, "weight_g": 1.0, "tool_tip": "Compact GRIN collimator for 1550 nm."}]},
+    {"type": "beam_expander", "models": [{"id": "exp-5x-mini", "magnification": 5, "residual_divergence_mrad": 0.5, "insertion_loss_db": 0.5, "cost_usd": 80, "weight_g": 8, "tool_tip": "5× beam expander to reduce divergence."}]},
+    {"type": "filter_dichroic", "models": [{"id": "dich-1310-1550", "lambda_pass_nm": 1310, "lambda_reflect_nm": 1550, "il_pass_db": 0.3, "il_reflect_db": 0.3, "cost_usd": 40, "weight_g": 2, "tool_tip": "Passes 1310 nm alignment and reflects 1550 nm data."}]},
+    {"type": "tap_splitter", "models": [{"id": "tap-95-5", "ratio_main": 0.95, "ratio_tap": 0.05, "il_db": 0.5, "cost_usd": 20, "weight_g": 1.5, "tool_tip": "95/5 tap feeding alignment sensor."}]},
     {"type": "fsm", "models": [{"id": "fsm-1khz", "bandwidth_hz": 1000, "range_mrad": 5, "resolution_urad": 5, "latency_ms": 0.5, "power_w": 1.2, "cost_usd": 250, "weight_g": 25}, {"id": "real-mirrorcle-a7m20", "vendor": "Mirrorcle", "bandwidth_hz": 1000, "range_mrad": 7, "resolution_urad": 2, "latency_ms": 0.4, "power_w": 1.0, "cost_usd": 450, "weight_g": 20, "source_url": "https://www.mirrorcletech.com"}]},
     {"type": "gimbal", "models": [{"id": "gim-100hz", "bandwidth_hz": 100, "range_deg": 10, "resolution_mrad": 0.1, "latency_ms": 5, "power_w": 6, "cost_usd": 400, "weight_g": 180}, {"id": "real-newscale-m3", "vendor": "New Scale", "bandwidth_hz": 50, "range_deg": 5, "resolution_mrad": 0.35, "latency_ms": 8, "power_w": 3, "cost_usd": 900, "weight_g": 60, "source_url": "https://www.newscaletech.com"}]},
     {"type": "receiver_objective", "models": [
@@ -118,7 +118,7 @@ window.COMPONENTS_DB = {
       {"id": "rx-mirror-120mm", "aperture_mm": 120, "efficiency": 0.9, "type": "reflective", "cost_usd": 160, "weight_g": 300}
     ]},
     {"type": "lens_stack", "models": [
-      {"id": "stack-none", "elements": [], "transmission": 1.0, "aperture_mm": 0, "cost_usd": 0, "weight_g": 0},
+      {"id": "stack-none", "elements": [], "transmission": 1.0, "aperture_mm": 0, "cost_usd": 0, "weight_g": 0, "tool_tip": "No additional lens stack."},
       {"id": "stack-2x-fresnel-150", "elements": [
         {"type": "fresnel", "diameter_mm": 150, "tau": 0.8},
         {"type": "fresnel", "diameter_mm": 150, "tau": 0.8}
@@ -129,11 +129,12 @@ window.COMPONENTS_DB = {
       ], "transmission": 0.91, "aperture_mm": 40, "cost_usd": 140, "weight_g": 90, "spacing_tolerance_um": 50}
     ]},
     {"type": "optomech_mount", "models": [
-      {"id": "mount-basic", "supports_stack": true, "adjust_axial_um": 300, "adjust_tilt_mrad": 3, "cost_usd": 45, "weight_g": 120},
+      {"id": "mount-basic", "supports_stack": true, "adjust_axial_um": 300, "adjust_tilt_mrad": 3, "cost_usd": 45, "weight_g": 120, "tool_tip": "Basic mount; supports lens stacks."},
       {"id": "mount-precision", "supports_stack": true, "adjust_axial_um": 50, "adjust_tilt_mrad": 1, "cost_usd": 120, "weight_g": 200}
     ]},
     {"type": "sensor_quad", "models": [{"id": "quad-1khz", "bandwidth_hz": 1000, "nep_w_sqrtHz": 1e-12, "active_area_mm": 3, "cost_usd": 90, "weight_g": 3}]},
     {"type": "receiver_array", "models": [
+      {"id": "arr-none", "count": 0, "sub_aperture_mm": 0, "fill_factor": 0, "combiner_il_db": 0, "efficiency": 0, "dual_lambda_ok": true, "tool_tip": "No receiver array (single objective only)."},
       {"id": "arr-3x150-fresnel", "count": 3, "sub_aperture_mm": 150, "fill_factor": 0.9, "combiner_il_db": 1.0, "efficiency": 0.68, "efficiency_1550": 0.68, "efficiency_1310": 0.6, "envelope_diameter_mm": 300, "grid_rows": 3, "grid_cols": 1, "pitch_mm": 155, "envelope_shape": "circle", "aoa_k": 1.0, "sampling_factor": 0.95, "dual_lambda_ok": true, "tilt_std_mrad": 0.5, "flatness_um_rms": 150, "offset_mrad": 0, "aoa_extra_mrad": 0, "cost_usd": 220, "weight_g": 420},
       {"id": "arr-4x1in-fresnel", "count": 16, "sub_aperture_mm": 25.4, "fill_factor": 0.9, "combiner_il_db": 2.0, "efficiency": 0.65, "efficiency_1550": 0.65, "efficiency_1310": 0.58, "grid_rows": 4, "grid_cols": 4, "pitch_mm": 27.0, "envelope_shape": "rect", "envelope_width_mm": 110, "envelope_height_mm": 110, "aoa_k": 1.2, "sampling_factor": 0.92, "dual_lambda_ok": true, "tilt_std_mrad": 0.7, "flatness_um_rms": 200, "offset_mrad": 0, "aoa_extra_mrad": 0, "cost_usd": 96, "weight_g": 240},
       {"id": "arr-2x2-2in-refractive", "count": 4, "sub_aperture_mm": 50.8, "fill_factor": 0.95, "combiner_il_db": 1.2, "efficiency": 0.85, "efficiency_1550": 0.85, "efficiency_1310": 0.83, "grid_rows": 2, "grid_cols": 2, "pitch_mm": 53.0, "envelope_shape": "rect", "envelope_width_mm": 110, "envelope_height_mm": 110, "aoa_k": 0.8, "sampling_factor": 0.97, "dual_lambda_ok": true, "tilt_std_mrad": 0.3, "flatness_um_rms": 80, "offset_mrad": 0, "aoa_extra_mrad": 0, "cost_usd": 180, "weight_g": 520}

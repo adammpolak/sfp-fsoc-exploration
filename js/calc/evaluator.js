@@ -44,35 +44,68 @@
     return alpha_db_per_km * L_km;
   }
 
-  function insertionLossDb(dbModels){
-    let sum = 0;
-    const add = v => { if(typeof v === 'number') sum += v; };
+  function insertionStageDetails(dbModels){
+    let total = 0;
+    const stages = [];
+    const addStage = (type, model, loss_db, label) => {
+      const val = typeof loss_db === 'number' ? Number(loss_db) : null;
+      if(val && val > 0){
+        total += val;
+        stages.push({ type, model, label: label || (model && model.id) || type, delta_db: -val });
+      }
+    };
     const col = findModel(dbModels, 'collimator');
+    addStage('collimator', col, col && col.insertion_loss_db);
+    const iso = findModel(dbModels, 'optical_isolator');
+    addStage('optical_isolator', iso, iso && iso.il_db);
     const exp = findModel(dbModels, 'beam_expander');
+    addStage('beam_expander', exp, exp && exp.insertion_loss_db);
+    const tel = findModel(dbModels, 'tx_telescope');
+    if(tel && typeof tel.throughput === 'number'){
+      const il = -linToDb(Math.max(Math.min(tel.throughput,1), 1e-6));
+      addStage('tx_telescope', tel, il, 'TX telescope');
+    }
+    const voa = findModel(dbModels, 'voa');
+    addStage('voa', voa, voa && voa.il_db, 'VOA');
     const dich = findModel(dbModels, 'filter_dichroic');
+    if(dich){
+      const il = Math.max(dich.il_pass_db || 0, dich.il_reflect_db || 0);
+      addStage('filter_dichroic', dich, il, 'Dichroic filter');
+    }
     const tap = findModel(dbModels, 'tap_splitter');
+    addStage('tap_splitter', tap, tap && (tap.il_db || 0), 'Tap splitter');
+    const shutter = findModel(dbModels, 'safety_shutter');
+    addStage('safety_shutter', shutter, shutter && shutter.attenuation_closed_db, 'Safety shutter');
+    const window = findModel(dbModels, 'window');
+    if(window){
+      const il = (window.ar_db || 0) + (window.contamination_penalty_db || 0);
+      addStage('window', window, il, 'Window');
+    }
+    const fieldStop = findModel(dbModels, 'field_stop');
+    if(fieldStop){
+      const il = fieldStop.il_db || 0;
+      addStage('field_stop', fieldStop, il, 'Field stop');
+    }
+    const od = findModel(dbModels, 'od_filter');
+    addStage('od_filter', od, od && od.il_db, 'OD filter');
+    const filt = findModel(dbModels, 'interference_filter');
+    addStage('interference_filter', filt, filt && (filt.il_db || 0), 'Interference filter');
     const stack = findModel(dbModels, 'lens_stack');
-    const rxArr = findModel(dbModels, 'receiver_array');
-    const comb = findModel(dbModels, 'combiner');
-    add(col && col.insertion_loss_db);
-    add(exp && exp.insertion_loss_db);
-    // For dichroics/taps, assume main path IL
-    add(dich && Math.max(dich.il_pass_db || 0, dich.il_reflect_db || 0));
-    add(tap && (tap.il_db || 0));
     if(stack && typeof stack.transmission === 'number'){
       const il = -linToDb(Math.max(Math.min(stack.transmission,1), 1e-6));
-      add(il);
+      addStage('lens_stack', stack, il, 'Lens stack');
     }
-    // Combiner IL based on array count, if both present
+    const rxArr = findModel(dbModels, 'receiver_array');
+    const comb = findModel(dbModels, 'combiner');
     if(rxArr){
       let combIl = Math.max(rxArr.combiner_il_db || 0, 0);
       if(comb && (comb.base_il_db != null) && (comb.per_stage_il_db != null)){
         const stages = Math.ceil(Math.log2(Math.max(rxArr.count||1,1)));
         combIl = comb.base_il_db + comb.per_stage_il_db * stages;
       }
-      add(combIl);
+      addStage('combiner', comb || rxArr, combIl, 'Combiner');
     }
-    return sum;
+    return { total, stages };
   }
 
   function findModel(db, type){
@@ -105,7 +138,8 @@
     const ptx_dbm = tosa && typeof tosa.optical_power_dbm === 'number' ? tosa.optical_power_dbm : 0;
 
     // Optics IL
-    const il_db = insertionLossDb(dbModels);
+    const insertion = insertionStageDetails(dbModels);
+    const il_db = insertion.total;
 
     // Beam radius/divergence
     const beam = computeBeamRadiusAtDistance(config, dbModels);
@@ -182,6 +216,35 @@
     const sens_dbm = estimateSensitivityDbm(dbModels, bitrate);
     const margin_db = prx_dbm - sens_dbm;
 
+    // Build stage breakdown (dBm chain)
+    const stages = [];
+    let currentPower = ptx_dbm;
+    const pushStage = (type, label, deltaDb, model) => {
+      const entry = {
+        type,
+        label,
+        delta_db: deltaDb,
+        p_in_dbm: currentPower,
+        p_out_dbm: currentPower + deltaDb,
+        model: model || null
+      };
+      stages.push(entry);
+      currentPower = entry.p_out_dbm;
+    };
+    // Initial transmitter output reference
+    stages.push({ type: 'tosa_output', label: 'TOSA output', delta_db: 0, p_in_dbm: currentPower, p_out_dbm: currentPower, model: tosa });
+    insertion.stages.forEach(stage => {
+      pushStage(stage.type, stage.label, stage.delta_db, stage.model || findModel(dbModels, stage.type));
+    });
+    pushStage('atmosphere', 'Atmospheric loss', -atm_db);
+    pushStage('scintillation', 'Scintillation margin', -scin_db);
+    pushStage('pointing', 'Pointing loss', -point_db);
+    const geomLabel = (rxArr ? 'Capture (array)' : 'Capture (aperture)');
+    pushStage('geometry', geomLabel, geo_db, rxArr || rxObj);
+    const prStage = { type: 'receiver_input', label: 'Photodiode input', delta_db: 0, p_in_dbm: currentPower, p_out_dbm: currentPower, model: findModel(dbModels, 'photodiode') || findModel(dbModels, 'rosa') };
+    stages.push(prStage);
+    stages.push({ type: 'receiver_sensitivity', label: 'Receiver sensitivity', delta_db: 0, p_in_dbm: currentPower, p_out_dbm: currentPower, model: findModel(dbModels, 'rosa'), sens_dbm, margin_db });
+
     return {
       ptx_dbm,
       il_db,
@@ -193,7 +256,8 @@
       geo_db,
       prx_dbm,
       sens_dbm,
-      margin_db
+      margin_db,
+      stages
     };
   }
 
@@ -209,8 +273,19 @@
     return out;
   }
 
+  function buildStageBreakdown(db, config){
+    const res = evaluate(db, config);
+    return {
+      stages: res.stages,
+      ptx_dbm: res.ptx_dbm,
+      prx_dbm: res.prx_dbm,
+      sens_dbm: res.sens_dbm,
+      margin_db: res.margin_db
+    };
+  }
+
   global.Calc = global.Calc || {};
-  global.Calc.Evaluator = { evaluate, sweepPrx };
+  global.Calc.Evaluator = { evaluate, sweepPrx, buildStageBreakdown };
 })(window);
 
 
