@@ -7,10 +7,32 @@
     config: null,
     selection: {
       // selected model id per category type
+    },
+    metrics: {},
+    beam: {
+      profile: null,
+      zoomToLens: false,
+      jitterActive: false,
+      autoAlign: true,
+      animation: null,
+      svgRefs: null,
+      distance_m: null,
+      capture: {
+        fraction: 1,
+        history: []
+      }
+    },
+    ui: {
+      channelOffsetPx: 0
     }
   };
   // Canvas interaction state
-  state.canvas = { zoom: 1, panX: 0, panY: 0, isPanning: false, lastX: 0, lastY: 0, bound: false };
+  state.canvas = { 
+    zoom: 1, panX: 0, panY: 0, isPanning: false, lastX: 0, lastY: 0, bound: false,
+    expandedGroups: new Set(), // Set of group keys that are expanded
+    expandedComponents: new Set(), // Set of component keys that are expanded
+    highlightStage: null
+  };
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -276,21 +298,21 @@
 
   // Defaults
   const defaultConfig = {
-    schema_version: '0.1',
-    global: {
-      bitrate_gbps: 1,
-      wavelength_nm: 1550,
-      target_ber: 1e-12,
-      weather: 'clear',
-      distance_m: 1000,
-      fec_model: 'fec-rs',
+        schema_version: '0.1',
+        global: {
+          bitrate_gbps: 1,
+          wavelength_nm: 1550,
+          target_ber: 1e-12,
+          weather: 'clear',
+          distance_m: 1000,
+          fec_model: 'fec-rs',
       alignment_mode: 'pilot',
       align_wavelength_nm: 1550
-    },
-    channel: {
-      atmospheric_alpha_db_per_km: 0.2,
-      Cn2: 1e-14,
-      pointing_jitter_mrad_rms: 0.2,
+        },
+        channel: {
+          atmospheric_alpha_db_per_km: 0.2,
+          Cn2: 1e-14,
+          pointing_jitter_mrad_rms: 0.2,
       wind_mps: 5
     }
   };
@@ -313,6 +335,41 @@
     renderPartsList();
     renderAll();
     bindPartsSearch();
+    bindTabs();
+    const zoomToggle = document.getElementById('beamZoomToggle');
+    if(zoomToggle){
+      zoomToggle.addEventListener('click', () => {
+        state.beam.zoomToLens = !state.beam.zoomToLens;
+        zoomToggle.classList.toggle('active', state.beam.zoomToLens);
+        renderCanvas();
+      });
+    }
+    const jitterToggle = document.getElementById('beamJitterToggle');
+    if(jitterToggle){
+      jitterToggle.addEventListener('click', () => {
+        state.beam.jitterActive = !state.beam.jitterActive;
+        jitterToggle.classList.toggle('active', state.beam.jitterActive);
+        if(state.beam.jitterActive){
+          initBeamJitterAnimation();
+        } else {
+          stopBeamJitter();
+        }
+      });
+    }
+    const autoAlignToggle = document.getElementById('beamAutoAlign');
+    if(autoAlignToggle){
+      autoAlignToggle.checked = state.beam.autoAlign;
+      autoAlignToggle.addEventListener('change', () => {
+        state.beam.autoAlign = autoAlignToggle.checked;
+        if(!state.beam.autoAlign){
+          stopBeamJitter();
+          state.beam.jitterActive = false;
+          jitterToggle && jitterToggle.classList.remove('active');
+        } else if(state.beam.jitterActive){
+          initBeamJitterAnimation();
+        }
+      });
+    }
   });
 
   function initSelectionFromDb(){
@@ -334,27 +391,44 @@
       .filter(stage => stage.delta_db !== 0)
       .map(stage => {
         const delta = stage.delta_db >= 0 ? `+${stage.delta_db.toFixed(2)}` : stage.delta_db.toFixed(2);
-        return `<div class="stage-card"><div class="stage-label">${stage.label}</div><div class="stage-gain">${delta} dB</div><div class="stage-power">${stage.p_in_dbm.toFixed(2)} → ${stage.p_out_dbm.toFixed(2)} dBm</div></div>`;
+        return `<div class="stage-card" data-stage="${stage.type}"><div class="stage-label">${stage.label}</div><div class="stage-gain">${delta} dB</div><div class="stage-power">${stage.p_in_dbm.toFixed(2)} → ${stage.p_out_dbm.toFixed(2)} dBm</div></div>`;
       }).join('');
     el.innerHTML = `<h4>Gain / Loss Chain</h4><div class="stage-container">${entries || '<p>All stages neutral.</p>'}</div>`;
+
+    const cards = el.querySelectorAll('.stage-card');
+    cards.forEach(card => {
+      card.addEventListener('click', () => {
+        const stageType = card.getAttribute('data-stage');
+        if(!stageType) return;
+        state.canvas.highlightStage = stageType;
+        expandForStage(stageType);
+        requestAnimationFrame(() => {
+          renderCanvas();
+          const target = document.querySelector('.component.highlighted');
+          if(target){
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          setTimeout(() => { state.canvas.highlightStage = null; renderCanvas(); }, 1800);
+        });
+      });
+    });
   }
 
-  function buildMaxDistanceSummary(res, selDb){
-    const rawMax = computeMaxReachMeters(selDb, state.config);
-    const maxReach = rawMax === null ? state.config.global.distance_m : rawMax;
-    if(maxReach <= 0){
+  function buildMaxDistanceSummary(res, selDb, maxReachMeters){
+    const maxReach = (typeof maxReachMeters === 'number' && isFinite(maxReachMeters)) ? maxReachMeters : state.config.global.distance_m;
+    if(maxReach == null || !isFinite(maxReach) || maxReach <= 0){
       return `<h4>Max Distance Explained</h4><p class="no-reach">The link budget never meets receiver sensitivity at any distance. Increase Tx power, reduce fixed losses, improve geometric capture, or choose a more sensitive receiver.</p>`;
     }
     const rows = [
-      {k: 'Tx power (dBm)', v: res.ptx_dbm.toFixed(2)},
-      {k: 'Total insertion (dB)', v: (-res.il_db).toFixed(2)},
-      {k: 'Atmospheric loss (dB)', v: (-res.atm_db).toFixed(2)},
-      {k: 'Scintillation margin (dB)', v: (-res.scin_db).toFixed(2)},
-      {k: 'Pointing loss (dB)', v: (-res.point_db).toFixed(2)},
-      {k: 'Geometric gain (dB)', v: res.geo_db.toFixed(2)},
-      {k: 'Received power (dBm)', v: res.prx_dbm.toFixed(2)},
-      {k: 'Sensitivity (dBm)', v: res.sens_dbm.toFixed(2)},
-      {k: 'Margin (dB)', v: res.margin_db.toFixed(2)},
+      {k: 'Tx power (dBm)', v: safeFixedString(res.ptx_dbm, 2)},
+      {k: 'Total insertion (dB)', v: safeFixedString(res.il_db != null ? -res.il_db : null, 2)},
+      {k: 'Atmospheric loss (dB)', v: safeFixedString(res.atm_db != null ? -res.atm_db : null, 2)},
+      {k: 'Scintillation margin (dB)', v: safeFixedString(res.scin_db != null ? -res.scin_db : null, 2)},
+      {k: 'Pointing loss (dB)', v: safeFixedString(res.point_db != null ? -res.point_db : null, 2)},
+      {k: 'Geometric gain (dB)', v: safeFixedString(res.geo_db, 2)},
+      {k: 'Received power (dBm)', v: safeFixedString(res.prx_dbm, 2)},
+      {k: 'Sensitivity (dBm)', v: safeFixedString(res.sens_dbm, 2)},
+      {k: 'Margin (dB)', v: safeFixedString(res.margin_db, 2)},
       {k: 'Max reach (km)', v: (maxReach/1000).toFixed(2)}
     ];
     const html = rows.map(r => `<div class="term"><span>${r.k}</span><span>${r.v}</span></div>`).join('');
@@ -388,6 +462,64 @@
 
   function saveSession(){
     localStorage.setItem('fsoc_config_v01', JSON.stringify(state.config));
+  }
+
+  function bindTabs(){
+    const tabButtons = document.querySelectorAll('.tab-button');
+    const tabPanels = document.querySelectorAll('.tab-panel');
+    if(!tabButtons.length || !tabPanels.length) return;
+
+    const activateTab = (targetId) => {
+      tabButtons.forEach(btn => {
+        const id = btn.getAttribute('data-tab');
+        const isActive = id === targetId;
+        btn.classList.toggle('active', isActive);
+      });
+      tabPanels.forEach(panel => {
+        const isActive = panel.id === `tab-${targetId}`;
+        panel.classList.toggle('active', isActive);
+      });
+      saveUIState('active_tab', targetId);
+    };
+
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-tab');
+        activateTab(id);
+      });
+    });
+
+    const savedTab = loadUIState('active_tab');
+    if(savedTab){
+      const targetPanel = document.getElementById(`tab-${savedTab}`);
+      if(targetPanel){
+        activateTab(savedTab);
+        return;
+      }
+    }
+    activateTab('properties');
+  }
+
+  function saveUIState(key, value){
+    try {
+      const stateStr = localStorage.getItem('fsoc_ui_state');
+      const state = stateStr ? JSON.parse(stateStr) : {};
+      state[key] = value;
+      localStorage.setItem('fsoc_ui_state', JSON.stringify(state));
+    } catch(e){
+      // ignore localStorage errors silently
+    }
+  }
+
+  function loadUIState(key){
+    try {
+      const stateStr = localStorage.getItem('fsoc_ui_state');
+      if(!stateStr) return null;
+      const state = JSON.parse(stateStr);
+      return state[key];
+    } catch(e){
+      return null;
+    }
   }
 
   function bindToolbar(){
@@ -562,21 +694,21 @@
   }
 
   function renderPartsList(filterTerm){
-    const list = document.getElementById('partsList');
-    list.innerHTML = '';
+      const list = document.getElementById('partsList');
+      list.innerHTML = '';
     for(const group of CATEGORY_TREE){
-      const groupEl = document.createElement('div');
-      groupEl.className = 'category-group';
+        const groupEl = document.createElement('div');
+        groupEl.className = 'category-group';
       const groupTitle = document.createElement('div');
       groupTitle.className = 'category-title';
       groupTitle.textContent = group.label;
       groupEl.appendChild(groupTitle);
       for(const child of group.children){
         renderCategoryNode(child, groupEl, filterTerm, 0);
+        }
+        list.appendChild(groupEl);
       }
-      list.appendChild(groupEl);
     }
-  }
 
   function renderCategoryNode(node, container, filterTerm, depth){
     if(node.children){
@@ -667,25 +799,23 @@
     if(type === 'receiver_array'){
       const mode = state.config.global.alignment_mode || 'dual_lambda';
       if(mode === 'dual_lambda' && model.dual_lambda_ok === false) return false;
+      }
+      return true;
     }
-    return true;
-  }
 
   function renderInspector(type, model){
     const insp = document.getElementById('inspector');
     insp.innerHTML = '';
-    const title = document.createElement('div');
+      const title = document.createElement('div');
     title.innerHTML = '<strong>' + type + '</strong>: ' + model.id;
     insp.appendChild(title);
     // Editable fields for receiver_array
-    if(type === 'receiver_array' || type === 'aspheric_collimator' || type === 'grin_collimator' || type === 'tx_telescope' || type === 'tosa_type' || type === 'optical_isolator' || type === 'interference_filter' || type === 'tosa'){
+    if(type === 'receiver_array' || type === 'aspheric_collimator' || type === 'grin_collimator' || type === 'tx_telescope' || type === 'tosa_type' || type === 'optical_isolator' || type === 'interference_filter' || type === 'tosa' || type === 'fsm' || type === 'gimbal' || type === 'pilot_injector' || type === 'pilot_demod' || type === 'align_laser'){
       const fields = [
-        // receiver_array fields
         ...(type==='receiver_array' ? [
           {k:'sub_aperture_mm', step:0.1}, {k:'grid_rows', step:1}, {k:'grid_cols', step:1}, {k:'pitch_mm', step:0.1},
           {k:'fill_factor', step:0.01}, {k:'sampling_factor', step:0.01}, {k:'tilt_std_mrad', step:0.1}, {k:'flatness_um_rms', step:10}, {k:'offset_mrad', step:0.1}, {k:'aoa_extra_mrad', step:0.1}
         ] : []),
-        // optics
         ...(type==='aspheric_collimator' ? [
           {k:'focal_length_mm', step:0.1}, {k:'na', step:0.01}, {k:'residual_divergence_mrad', step:0.1}, {k:'ar_wavelength_nm', step:1}
         ] : []),
@@ -695,21 +825,50 @@
         ...(type==='tx_telescope' ? [
           {k:'aperture_mm', step:0.1}, {k:'magnification', step:0.1}, {k:'residual_divergence_mrad', step:0.01}
         ] : []),
-        // TOSA type
         ...(type==='tosa_type' ? [
           {k:'extinction_ratio_db', step:0.1}, {k:'oma_dbm_max', step:0.1}
         ] : []),
-        // Isolator
         ...(type==='optical_isolator' ? [
           {k:'isolation_db', step:0.1}, {k:'il_db', step:0.1}
         ] : []),
-        // Interference filter
         ...(type==='interference_filter' ? [
           {k:'center_nm', step:1}, {k:'fwhm_nm', step:0.5}
         ] : []),
-        // TOSA editable output power (dBm)
-        ...(type==='tosa' ? [ {k:'optical_power_dbm', step:0.1, min:-10, max:20} ] : [])
+        ...(type==='tosa' ? [ {k:'optical_power_dbm', step:0.1, min:-10, max:20} ] : []),
+        ...(type==='fsm' ? [
+          {k:'bandwidth_hz', step:50}, {k:'range_mrad', step:0.1}, {k:'resolution_urad', step:0.1}, {k:'latency_ms', step:0.1}
+        ] : []),
+        ...(type==='gimbal' ? [
+          {k:'bandwidth_hz', step:10}, {k:'range_deg', step:0.1}, {k:'resolution_mrad', step:0.01}, {k:'latency_ms', step:0.5}
+        ] : []),
+        ...(type==='pilot_injector' ? [
+          {k:'pilot_ratio_pct', step:0.1}
+        ] : []),
+        ...(type==='pilot_demod' ? [
+          {k:'bandwidth_hz', step:10}, {k:'noise_v_sqrtHz', step:1e-10}
+        ] : []),
+        ...(type==='align_laser' ? [
+          {k:'power_dbm', step:0.1}, {k:'wavelength_nm', step:1}
+        ] : [])
       ];
+      if(type==='beam_expander'){
+        fields.push({k:'residual_divergence_mrad', step:0.1});
+        fields.push({k:'output_waist_mm', step:0.1});
+      }
+      if(type==='tx_telescope'){
+        fields.push({k:'residual_divergence_mrad', step:0.05});
+        fields.push({k:'output_waist_mm', step:0.1});
+      }
+      if(type==='receiver_array'){
+        fields.push({k:'envelope_diameter_mm', step:1});
+        fields.push({k:'envelope_width_mm', step:1});
+        fields.push({k:'envelope_height_mm', step:1});
+        fields.push({k:'sub_aperture_mm', step:0.1});
+        fields.push({k:'fill_factor', step:0.01});
+        fields.push({k:'efficiency', step:0.01});
+        fields.push({k:'efficiency_1550', step:0.01});
+        fields.push({k:'efficiency_1310', step:0.01});
+      }
       for(const f of fields){
         const wrap = document.createElement('div');
         const label = document.createElement('label');
@@ -725,7 +884,7 @@
           const cat = state.db.categories.find(c => c.type === type);
           const idx = cat.models.findIndex(m => m.id === model.id);
           if(idx >= 0){
-            const v = Number(input.value);
+          const v = Number(input.value);
             cat.models[idx][f.k] = isNaN(v) ? cat.models[idx][f.k] : v;
             saveSession();
             renderAll();
@@ -734,6 +893,32 @@
         label.appendChild(input);
         wrap.appendChild(label);
         insp.appendChild(wrap);
+      }
+      if(type === 'tosa'){
+        const wrapMw = document.createElement('div');
+        const labelMw = document.createElement('label');
+        labelMw.textContent = 'optical_power_mw: ';
+        const inputMw = document.createElement('input');
+        inputMw.type = 'number';
+        inputMw.step = '0.1';
+        const mwVal = model.optical_power_dbm != null ? Math.pow(10, model.optical_power_dbm / 10) : '';
+        inputMw.value = mwVal === '' ? '' : mwVal.toFixed(3);
+        inputMw.addEventListener('change', () => {
+          const cat = state.db.categories.find(c => c.type === 'tosa');
+          const idx = cat.models.findIndex(m => m.id === model.id);
+          if(idx >= 0){
+            const v = Number(inputMw.value);
+            if(!isNaN(v) && v > 0){
+              cat.models[idx].optical_power_dbm = 10 * Math.log10(v);
+              saveSession();
+              renderAll();
+              renderInspector(type, cat.models[idx]);
+            }
+          }
+        });
+        labelMw.appendChild(inputMw);
+        wrapMw.appendChild(labelMw);
+        insp.appendChild(wrapMw);
       }
       // Revert to defaults button
       const revert = document.createElement('button');
@@ -752,244 +937,71 @@
         }
       });
       insp.appendChild(revert);
-    } else {
-      const pre = document.createElement('pre');
-      pre.textContent = JSON.stringify(model, null, 2);
+      } else {
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(model, null, 2);
       insp.appendChild(pre);
     }
   }
 
   function renderCanvas(){
-    const svg = document.getElementById('beamCanvas');
-    const { width, height } = svg.getBoundingClientRect();
-    svg.setAttribute('viewBox', `0 0 ${Math.max(10,width)} ${Math.max(10,height)}`);
-    svg.innerHTML = '';
-
-    const root = document.createElementNS(SVG_NS, 'g');
-    root.setAttribute('transform', `translate(${state.canvas.panX},${state.canvas.panY}) scale(${state.canvas.zoom})`);
-    svg.appendChild(root);
-
+    stageColumnMap = {};
     const selDb = selectedDb();
     const evalRes = (window.Calc && window.Calc.Evaluator) ? window.Calc.Evaluator.evaluate(selDb, state.config) : null;
     const stageRes = (window.Calc && window.Calc.Evaluator) ? window.Calc.Evaluator.buildStageBreakdown(selDb, state.config) : null;
 
-    const cardWidth = 240;
-    const outerMargin = 80;
-    const axisStart = outerMargin + cardWidth;
-    const axisEnd = Math.max(axisStart + 260, width - (outerMargin + cardWidth));
-    const axisY = height - 70;
-    let baselineY = outerMargin + 60;
+    // Render TX column
+    renderColumn('txGroups', 'tx', evalRes, stageRes);
 
-    const rawMaxReach = computeMaxReachMeters(selDb, state.config);
-    const maxReach = rawMaxReach === null ? state.config.global.distance_m : Math.max(rawMaxReach, 0);
-    const effectiveRange = Math.max(maxReach, 1);
-    const span = axisEnd - axisStart;
-    const scaledReach = maxReach > 0 ? Math.min(maxReach / effectiveRange, 1) : 0;
-    const rxPhysicalX = axisStart + scaledReach * span;
+    // Render Channel column with alignment adjustment
+    renderChannel('channelGroups', evalRes, stageRes);
 
-    const txColumn = COLUMN_LAYOUT.find(c => c.id === 'tx');
-    const channelColumn = COLUMN_LAYOUT.find(c => c.id === 'channel');
-    const rxColumn = COLUMN_LAYOUT.find(c => c.id === 'rx');
-
-    const launchY = groupTop('Launch Optics', txColumn);
-    const detectorY = groupTop('Detector & Front-End', rxColumn);
-    if(launchY && detectorY){
-      baselineY = Math.max(outerMargin + 40, Math.min(launchY, detectorY) - 20);
+    // Evaluate beam at max reach for visualization
+    let maxBeamEval = null;
+    const maxReach = computeMaxReachMeters(selDb, state.config);
+    if(maxReach && isFinite(maxReach) && maxReach > 0){
+      try {
+        const cfgMax = JSON.parse(JSON.stringify(state.config));
+        cfgMax.global.distance_m = maxReach;
+        const evalMax = window.Calc && window.Calc.Evaluator && window.Calc.Evaluator.evaluate(selDb, cfgMax);
+        if(evalMax && evalMax.beam_profile){
+          maxBeamEval = { eval: evalMax, distance_m: maxReach };
+        }
+      } catch(e){ /* swallow */ }
     }
+    const renderedProfile = renderBeamVisual(evalRes, maxBeamEval, state.config.global.distance_m, { zoomToLens: state.beam.zoomToLens });
+    const activeProfile = renderedProfile || (maxBeamEval ? maxBeamEval.eval.beam_profile : (evalRes ? evalRes.beam_profile : null));
+    state.beam.profile = activeProfile;
+    state.beam.distance_m = maxBeamEval ? maxBeamEval.distance_m : state.config.global.distance_m;
 
-    // Draw channel background first so the beam overlays it
-    drawChannel(root, channelColumn, axisStart, axisEnd - axisStart, baselineY, evalRes, stageRes, true);
+    // Render RX column
+    renderColumn('rxGroups', 'rx', evalRes, stageRes);
 
-    drawDistanceAxis(root, axisStart, axisEnd, axisY, evalRes, maxReach);
-    let beamEndX = axisStart + span;
-    if(maxReach > 0){
-      beamEndX = Math.max(rxPhysicalX, axisStart + 12);
-    }
-    drawBeamEnvelope(root, axisStart, beamEndX, baselineY, evalRes, maxReach);
-
-    // TX total output label at the left above the start line
-    if(evalRes){
-      const ptx = document.createElementNS(SVG_NS, 'text');
-      ptx.setAttribute('x', String(axisStart - 8));
-      ptx.setAttribute('y', String(baselineY - 36));
-      ptx.setAttribute('text-anchor', 'end');
-      ptx.setAttribute('font-size', '12');
-      ptx.setAttribute('fill', '#0f172a');
-      ptx.textContent = 'TX output: ' + evalRes.ptx_dbm.toFixed(1) + ' dBm';
-      root.appendChild(ptx);
-    }
-    drawColumn(root, txColumn, axisStart, baselineY, evalRes, stageRes, { align: 'right', theme: 'tx' });
-    drawColumn(root, rxColumn, axisEnd, baselineY, evalRes, stageRes, { align: 'left', theme: 'rx' });
-
-    bindCanvasInteractions(svg);
+    alignChannelColumn();
   }
 
-  function drawDistanceAxis(root, xStart, xEnd, axisY, evalRes, maxReach){
-    const Lcurr = Math.max(state.config.global.distance_m, 1);
-    const effectiveRange = Math.max(maxReach, 1);
-
-    const line = document.createElementNS(SVG_NS, 'line');
-    line.setAttribute('x1', String(xStart));
-    line.setAttribute('y1', String(axisY));
-    line.setAttribute('x2', String(xEnd));
-    line.setAttribute('y2', String(axisY));
-    line.setAttribute('stroke', '#0f172a');
-    line.setAttribute('stroke-width', '2');
-    line.setAttribute('opacity', '0.6');
-    root.appendChild(line);
-
-    const ticks = 4;
-    for(let i=0;i<=ticks;i++){
-      const t = i / ticks;
-      const x = xStart + t * (xEnd - xStart);
-      const tick = document.createElementNS(SVG_NS, 'line');
-      tick.setAttribute('x1', String(x));
-      tick.setAttribute('y1', String(axisY));
-      tick.setAttribute('x2', String(x));
-      tick.setAttribute('y2', String(axisY + (i % ticks === 0 ? 12 : 6)));
-      tick.setAttribute('stroke', '#0f172a');
-      tick.setAttribute('opacity', '0.4');
-      root.appendChild(tick);
-      const lbl = document.createElementNS(SVG_NS, 'text');
-      lbl.setAttribute('x', String(x));
-      lbl.setAttribute('y', String(axisY + 28));
-      lbl.setAttribute('text-anchor', 'middle');
-      lbl.setAttribute('font-size', '11');
-      lbl.setAttribute('fill', '#334155');
-      lbl.textContent = (t * effectiveRange / 1000).toFixed(2) + ' km';
-      root.appendChild(lbl);
-    }
-
-    const scalePxPerM = (xEnd - xStart) / effectiveRange;
-    const xc = xStart + Math.min(Lcurr, effectiveRange) * scalePxPerM;
-    const xm = xStart + Math.min(maxReach, effectiveRange) * scalePxPerM;
-
-    const current = document.createElementNS(SVG_NS, 'line');
-    current.setAttribute('x1', String(xc));
-    current.setAttribute('y1', String(axisY - 12));
-    current.setAttribute('x2', String(xc));
-    current.setAttribute('y2', String(axisY + 12));
-    current.setAttribute('stroke', '#0ea5e9');
-    current.setAttribute('stroke-width', '2');
-    root.appendChild(current);
-
-    const marker = document.createElementNS(SVG_NS, 'line');
-    marker.setAttribute('x1', String(xm));
-    marker.setAttribute('y1', String(axisY - 18));
-    marker.setAttribute('x2', String(xm));
-    marker.setAttribute('y2', String(axisY + 18));
-    marker.setAttribute('stroke', '#ef4444');
-    marker.setAttribute('stroke-width', '2.5');
-    root.appendChild(marker);
-
-    const label = document.createElementNS(SVG_NS, 'text');
-    label.setAttribute('x', String(xm));
-    label.setAttribute('y', String(axisY - 24));
-    label.setAttribute('text-anchor', 'middle');
-    label.setAttribute('font-size', '12');
-    label.setAttribute('fill', '#ef4444');
-    label.textContent = 'Max reach ' + (maxReach/1000).toFixed(2) + ' km';
-    root.appendChild(label);
-
-    if(maxReach < Lcurr){
-      const shade = document.createElementNS(SVG_NS, 'rect');
-      shade.setAttribute('x', String(xm));
-      shade.setAttribute('y', '0');
-      shade.setAttribute('width', String(Math.max(xEnd - xm, 0)));
-      shade.setAttribute('height', String(axisY - 20));
-      shade.setAttribute('fill', 'rgba(239, 68, 68, 0.06)');
-      root.appendChild(shade);
-    }
-
-    if(evalRes && evalRes.margin_db != null){
-      const marginNote = document.createElementNS(SVG_NS, 'text');
-      marginNote.setAttribute('x', String(xm - 8));
-      marginNote.setAttribute('y', String(axisY - 40));
-      marginNote.setAttribute('text-anchor', 'end');
-      marginNote.setAttribute('font-size', '11');
-      marginNote.setAttribute('fill', evalRes.margin_db >= 0 ? '#15803d' : '#b91c1c');
-      marginNote.textContent = 'Margin @ current: ' + evalRes.margin_db.toFixed(2) + ' dB';
-      root.appendChild(marginNote);
-    }
+  function makeGroupKey(columnId, groupLabel){
+    return `${columnId}-${groupLabel}`;
   }
 
-  function drawBeamEnvelope(root, txAnchor, rxAnchor, baselineY, evalRes, maxReach){
-    if(!evalRes){ return; }
-    const divergence = evalRes.divergence_mrad || 0.5;
-    const halfAngle = divergence / 1000;
-    const span = Math.max(rxAnchor - txAnchor, 1);
-    const beamWidth = Math.max((maxReach || 1) * halfAngle * (span / Math.max(maxReach || 1, 1)), 6);
-    const inset = span * 0.03;
-    const startX = txAnchor + inset;
-    const endX = rxAnchor - inset;
-    const poly = document.createElementNS(SVG_NS, 'polygon');
-    poly.setAttribute('points', `${startX},${baselineY} ${endX},${baselineY - beamWidth} ${endX},${baselineY + beamWidth}`);
-    poly.setAttribute('fill', 'rgba(59, 130, 246, 0.08)');
-    poly.setAttribute('stroke', 'rgba(59, 130, 246, 0.45)');
-    poly.setAttribute('stroke-width', '2');
-    root.appendChild(poly);
-
-    const lens = drawReceiverLens(endX, baselineY, evalRes);
-    if(lens) root.appendChild(lens);
+  function makeComponentKey(columnId, groupLabel, componentLabel){
+    return `${makeGroupKey(columnId, groupLabel)}-${componentLabel}`;
   }
 
-  function drawReceiverLens(x, baselineY, evalRes){
-    const rxObjective = getSelected('receiver_objective');
-    const rxArray = getSelected('receiver_array');
-    const hasArray = rxArray && hasActiveArray(rxArray);
-    const diameter = hasArray ? (Number(rxArray.envelope_diameter_mm || rxArray.envelope_width_mm || 100) * 1e-3) : (rxObjective ? (rxObjective.aperture_mm || 100) * 1e-3 : 0);
-    if(diameter <= 0) return null;
+  let stageColumnMap = {};
 
-    const beamRadius = evalRes ? evalRes.beam_radius_m : 0.1;
-    const captureRatio = Math.min(diameter / (beamRadius * 2), 1);
-    const outline = document.createElementNS(SVG_NS, 'g');
-    const lensRadiusPx = 40 * captureRatio;
-
-    const circle = document.createElementNS(SVG_NS, 'circle');
-    circle.setAttribute('cx', String(x));
-    circle.setAttribute('cy', String(baselineY));
-    circle.setAttribute('r', String(lensRadiusPx));
-    circle.setAttribute('fill', 'rgba(13, 148, 136, 0.18)');
-    circle.setAttribute('stroke', 'rgba(13, 148, 136, 0.6)');
-    circle.setAttribute('stroke-width', '2');
-    outline.appendChild(circle);
-
-    const label = document.createElementNS(SVG_NS, 'text');
-    label.setAttribute('class', 'receiver-lens-label');
-    label.setAttribute('x', String(x));
-    label.setAttribute('y', String(baselineY + lensRadiusPx + 14));
-    label.setAttribute('text-anchor', 'middle');
-    label.textContent = hasArray ? `${rxArray.count || 0} lens array (${Math.round(diameter*1000)} mm footprint)` : `${Math.round(diameter*1000)} mm lens`;
-    outline.appendChild(label);
-    return outline;
-  }
-
-  function drawColumn(root, columnDef, anchorX, baselineY, evalRes, stageRes, opts){
+  function renderColumn(containerId, columnId, evalRes, stageRes){
+    const container = document.getElementById(containerId);
+    if(!container) return;
+    
+    const columnDef = COLUMN_LAYOUT.find(c => c.id === columnId);
     if(!columnDef) return;
-    const align = (opts && opts.align) || 'left';
-    const theme = (opts && opts.theme) || 'tx';
-    const columnWidth = 240;
-    const boxPadding = 14;
-    const titleOffset = 28;
-    const cardHeight = 96;
-    const cardGap = 10;
-    const groupGap = 32;
-    const x = align === 'right' ? anchorX - columnWidth : anchorX;
-    let yCursor = baselineY;
-
-    const title = document.createElementNS(SVG_NS, 'text');
-    title.setAttribute('x', String(x));
-    title.setAttribute('y', String(yCursor - 22));
-    title.setAttribute('text-anchor', 'start');
-    title.setAttribute('font-size', '15');
-    title.setAttribute('fill', theme === 'tx' ? '#2563eb' : '#0f766e');
-    title.setAttribute('font-weight', '700');
-    title.textContent = columnDef.label;
-    root.appendChild(title);
-
+    
     const stageList = stageRes && stageRes.stages ? stageRes.stages : [];
-
+    container.innerHTML = '';
+    
     columnDef.groups.forEach(group => {
+    const groupDetails = { columnId: columnId, label: group.label };
       const components = group.components.filter(c => {
         if(c.hideWhenInactive){
           const active = hasActiveArray(getSelected('receiver_array'));
@@ -1004,261 +1016,451 @@
       });
       if(!components.length) return;
 
-      const count = components.length;
-      const box = document.createElementNS(SVG_NS, 'rect');
-      const boxY = yCursor;
-      const boxH = boxPadding * 2 + titleOffset + count * cardHeight + Math.max(0, count - 1) * cardGap;
-      box.setAttribute('x', String(x));
-      box.setAttribute('y', String(boxY));
-      box.setAttribute('width', String(columnWidth));
-      box.setAttribute('height', String(boxH));
-      box.setAttribute('rx', '12');
-      box.setAttribute('fill', theme === 'tx' ? 'rgba(59,130,246,0.06)' : 'rgba(20,184,166,0.08)');
-      box.setAttribute('stroke', theme === 'tx' ? 'rgba(59,130,246,0.35)' : 'rgba(13,148,136,0.35)');
-      root.appendChild(box);
+      const groupKey = makeGroupKey(columnId, group.label);
+      const isExpanded = state.canvas.expandedGroups.has(groupKey);
+      
+      // Calculate group total gain/loss
+      const groupStages = components
+        .map(c => c.stageType ? stageList.find(s => s.type === c.stageType) : null)
+        .filter(s => s && s.delta_db !== 0);
+      const groupTotalDelta = groupStages.reduce((sum, stage) => sum + stage.delta_db, 0);
+      const groupStartPower = groupStages.length > 0 ? groupStages[0].p_in_dbm : 0;
+      const groupEndPower = groupStages.length > 0 ? groupStages[groupStages.length - 1].p_out_dbm : 0;
 
-      const gTitle = document.createElementNS(SVG_NS, 'text');
-      gTitle.setAttribute('x', String(x + boxPadding));
-    gTitle.setAttribute('y', String(boxY + boxPadding + 12));
-      gTitle.setAttribute('text-anchor', 'start');
-      gTitle.setAttribute('font-size', '12');
-      gTitle.setAttribute('font-weight', '600');
-      gTitle.setAttribute('fill', '#1e293b');
-      gTitle.textContent = group.label;
-      root.appendChild(gTitle);
-
-      let cardY = boxY + boxPadding + titleOffset;
-      components.forEach((c, idx) => {
+      const groupEl = document.createElement('div');
+      groupEl.className = `group ${isExpanded ? 'expanded' : ''}`;
+      
+      // Group header
+      const headerEl = document.createElement('div');
+      headerEl.className = 'group-header';
+      headerEl.onclick = () => toggleGroup(groupKey);
+      
+      const arrowEl = document.createElement('span');
+      arrowEl.className = 'group-arrow';
+      arrowEl.textContent = '▶';
+      headerEl.appendChild(arrowEl);
+      
+      const titleEl = document.createElement('span');
+      titleEl.className = 'group-title';
+      titleEl.textContent = group.label;
+      headerEl.appendChild(titleEl);
+      
+      if(groupTotalDelta !== 0) {
+        const totalEl = document.createElement('div');
+        totalEl.className = `group-total ${groupTotalDelta >= 0 ? 'positive' : 'negative'}`;
+        totalEl.textContent = (groupTotalDelta >= 0 ? '+' : '') + groupTotalDelta.toFixed(2) + ' dB';
+        headerEl.appendChild(totalEl);
+        
+        const powerEl = document.createElement('div');
+        powerEl.className = 'group-power';
+        powerEl.textContent = `${groupStartPower.toFixed(1)} → ${groupEndPower.toFixed(1)} dBm`;
+        headerEl.appendChild(powerEl);
+      }
+      
+      groupEl.appendChild(headerEl);
+      
+      // Group content
+      const contentEl = document.createElement('div');
+      contentEl.className = 'group-content';
+      
+      const componentsEl = document.createElement('div');
+      componentsEl.className = 'components-list';
+      
+      components.forEach(c => {
+        const componentKey = makeComponentKey(columnId, group.label, c.label);
+        const isComponentExpanded = state.canvas.expandedComponents.has(componentKey);
+        
         const comp = c.type ? getSelected(c.type) : null;
         const stage = c.stageType ? stageList.find(s => s.type === c.stageType) : null;
-        drawComponentCard(root, {
-          x: x + boxPadding,
-          y: cardY,
-          width: columnWidth - boxPadding * 2,
-          label: c.label,
-          model: comp,
-          stage,
-          type: c.type,
-          theme
-        });
-        cardY += cardHeight + cardGap;
-      });
-
-      yCursor += boxH + groupGap;
-    });
-  }
-
-  function drawChannel(root, columnDef, x, width, baselineY, evalRes, stageRes, isBackground){
-    if(!columnDef) return;
-    const budgetStages = stageRes && stageRes.stages ? stageRes.stages : [];
-    const group = document.createElementNS(SVG_NS, 'g');
-    group.setAttribute('class', 'channel-layer');
-    if(isBackground && root.firstChild){
-      root.insertBefore(group, root.firstChild);
-    } else {
-      root.appendChild(group);
-    }
-
-    const panel = document.createElementNS(SVG_NS, 'rect');
-    const startY = baselineY;
-    panel.setAttribute('x', String(x));
-    panel.setAttribute('y', String(startY));
-    panel.setAttribute('width', String(width));
-    panel.setAttribute('height', String(220));
-    panel.setAttribute('rx', '18');
-    panel.setAttribute('fill', '#fde1d2');
-    panel.setAttribute('stroke', 'rgba(217,119,6,0.3)');
-    group.appendChild(panel);
-
-    const title = document.createElementNS(SVG_NS, 'text');
-    title.setAttribute('x', String(x + width/2));
-    title.setAttribute('y', String(startY - 12));
-    title.setAttribute('text-anchor', 'middle');
-    title.setAttribute('font-size', '13');
-    title.setAttribute('font-weight', '600');
-    title.setAttribute('fill', '#b45309');
-    title.textContent = columnDef.label;
-    group.appendChild(title);
-
-    let stageIdx = 0;
-    columnDef.groups.forEach(groupDef => {
-      groupDef.components.forEach(comp => {
-        const stage = comp.stageType ? budgetStages.find(s => s.type === comp.stageType) : null;
-        const cardWidth = width - 34;
-        const cardX = x + 17;
-        const cardY = startY + 40 + stageIdx * 52;
-        stageIdx++;
-
-        const card = document.createElementNS(SVG_NS, 'rect');
-        card.setAttribute('x', String(cardX));
-        card.setAttribute('y', String(cardY));
-        card.setAttribute('width', String(cardWidth));
-        card.setAttribute('height', '44');
-        card.setAttribute('rx', '12');
-        card.setAttribute('fill', 'rgba(255,255,255,0.9)');
-        card.setAttribute('stroke', 'rgba(217,119,6,0.35)');
-        group.appendChild(card);
-
-        const text = document.createElementNS(SVG_NS, 'text');
-        text.setAttribute('x', String(cardX + 12));
-        text.setAttribute('y', String(cardY + 20));
-        text.setAttribute('font-size', '12');
-        text.setAttribute('fill', '#0f172a');
-        text.textContent = comp.label;
-        group.appendChild(text);
-
         if(stage){
-          const delta = stage.delta_db;
-          const gain = document.createElementNS(SVG_NS, 'text');
-          gain.setAttribute('x', String(cardX + cardWidth - 12));
-          gain.setAttribute('y', String(cardY + 20));
-          gain.setAttribute('text-anchor', 'end');
-          gain.setAttribute('font-size', '12');
-          gain.setAttribute('fill', delta >= 0 ? '#15803d' : '#b91c1c');
-          gain.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(2) + ' dB';
-          group.appendChild(gain);
-
-          const power = document.createElementNS(SVG_NS, 'text');
-          power.setAttribute('x', String(cardX + cardWidth - 12));
-          power.setAttribute('y', String(cardY + 34));
-          power.setAttribute('text-anchor', 'end');
-          power.setAttribute('font-size', '10');
-          power.setAttribute('fill', '#475569');
-          power.textContent = `${stage.p_in_dbm.toFixed(1)} → ${stage.p_out_dbm.toFixed(1)} dBm`;
-          group.appendChild(power);
+          stageColumnMap[stage.type] = {
+            groupKey,
+            componentKey,
+            columnId
+          };
         }
-      });
-    });
+        
+        const componentEl = document.createElement('div');
+        componentEl.className = `component ${isComponentExpanded ? 'expanded' : ''}`;
+        if(stage && state.canvas.highlightStage === stage.type){
+          componentEl.classList.add('highlighted');
+        }
+        componentEl.onclick = (e) => {
+          if(e && e.stopPropagation) e.stopPropagation();
+          if(comp) {
+            state.selection[c.type] = comp.id;
+            saveSession();
+            renderPartsList();
+            renderInspector(c.type, comp);
+            renderAll();
+          }
+        };
+        
+        // Component header
+        const compHeaderEl = document.createElement('div');
+        compHeaderEl.className = 'component-header';
+        
+        if(comp) {
+          const compArrowEl = document.createElement('span');
+          compArrowEl.className = 'component-arrow';
+          compArrowEl.textContent = '▶';
+          compArrowEl.onclick = (e) => {
+            if(e && e.stopPropagation) e.stopPropagation();
+            toggleComponent(componentKey);
+          };
+          compHeaderEl.appendChild(compArrowEl);
+        }
+        
+        const compTitleEl = document.createElement('span');
+        compTitleEl.className = 'component-title';
+        compTitleEl.textContent = comp ? `${c.label} • ${comp.id}` : c.label;
+        compHeaderEl.appendChild(compTitleEl);
 
-    root.appendChild(group);
+        if(comp){
+          compHeaderEl.addEventListener('click', (e) => {
+            if(e && e.stopPropagation) e.stopPropagation();
+            toggleComponent(componentKey);
+          });
+        }
+        
+        if(stage && stage.delta_db !== 0) {
+          const compGainEl = document.createElement('div');
+          compGainEl.className = `component-gain ${stage.delta_db >= 0 ? 'positive' : 'negative'}`;
+          compGainEl.textContent = (stage.delta_db >= 0 ? '+' : '') + stage.delta_db.toFixed(2) + ' dB';
+          compHeaderEl.appendChild(compGainEl);
+          
+          const compPowerEl = document.createElement('div');
+          compPowerEl.className = 'component-power';
+          compPowerEl.textContent = `${stage.p_in_dbm.toFixed(1)} → ${stage.p_out_dbm.toFixed(1)} dBm`;
+          compHeaderEl.appendChild(compPowerEl);
+        }
+        
+        componentEl.appendChild(compHeaderEl);
+        
+        // Component details
+        if(comp) {
+          const detailsEl = document.createElement('div');
+          detailsEl.className = 'component-details';
+          
+          const metaEl = document.createElement('div');
+          metaEl.className = 'component-meta';
+          
+          if(c.type === 'receiver_array' && hasActiveArray(comp)){
+            metaEl.textContent = `${Number(comp.count||0)} elements • ${Number(comp.sub_aperture_mm||0)} mm • fill ${Math.round((comp.fill_factor||0)*100)}%`;
+          } else {
+            metaEl.textContent = comp.tool_tip || 'Selected component';
+          }
+          
+          detailsEl.appendChild(metaEl);
+          componentEl.appendChild(detailsEl);
+        }
+        
+        componentsEl.appendChild(componentEl);
+      });
+      
+      contentEl.appendChild(componentsEl);
+      groupEl.appendChild(contentEl);
+      container.appendChild(groupEl);
+    });
   }
 
-  function drawComponentCard(root, cfg){
-    const { x, y, width, label, model, stage, type, theme } = cfg;
-    const cardHeight = 96;
-    const card = document.createElementNS(SVG_NS, 'rect');
-    card.setAttribute('x', String(x));
-    card.setAttribute('y', String(y));
-    card.setAttribute('width', String(width));
-    card.setAttribute('height', String(cardHeight));
-    card.setAttribute('rx', '10');
-    card.setAttribute('fill', '#ffffff');
-    card.setAttribute('stroke', theme === 'rx' ? 'rgba(20,184,166,0.4)' : 'rgba(59,130,246,0.4)');
-    root.appendChild(card);
+  function renderChannel(containerId, evalRes, stageRes){
+    const container = document.getElementById(containerId);
+    if(!container) return;
+    
+    const budgetStages = stageRes && stageRes.stages ? stageRes.stages : [];
+    
+    container.innerHTML = '';
+    
+    const effectsEl = document.createElement('div');
+    effectsEl.className = 'channel-effects';
+    
+    const titleEl = document.createElement('div');
+    titleEl.className = 'channel-title';
+    titleEl.textContent = 'Propagation Effects';
+    effectsEl.appendChild(titleEl);
+    
+    const effects = [
+      { stageType: 'atmosphere', label: 'Atmospheric Loss' },
+      { stageType: 'scintillation', label: 'Scintillation Margin' },
+      { stageType: 'pointing', label: 'Pointing Loss' },
+      { stageType: 'geometry', label: 'Geometric Coupling' }
+    ];
+    
+    effects.forEach(effect => {
+      const stage = budgetStages.find(s => s.type === effect.stageType);
+      if(!stage) return;
+      
+      const effectEl = document.createElement('div');
+      effectEl.className = 'channel-effect';
+      
+      const labelEl = document.createElement('div');
+      labelEl.className = 'effect-label';
+      labelEl.textContent = effect.label;
+      effectEl.appendChild(labelEl);
+      
+      const gainEl = document.createElement('div');
+      gainEl.className = `effect-gain ${stage.delta_db >= 0 ? 'positive' : 'negative'}`;
+      gainEl.textContent = (stage.delta_db >= 0 ? '+' : '') + stage.delta_db.toFixed(2) + ' dB';
+      effectEl.appendChild(gainEl);
+      
+      const powerEl = document.createElement('div');
+      powerEl.className = 'effect-power';
+      powerEl.textContent = `${stage.p_in_dbm.toFixed(1)} → ${stage.p_out_dbm.toFixed(1)} dBm`;
+      effectEl.appendChild(powerEl);
+      
+      effectsEl.appendChild(effectEl);
+    });
+    
+    container.appendChild(effectsEl);
+  }
 
-    const content = document.createElementNS(SVG_NS, 'foreignObject');
-    content.setAttribute('x', String(x + 6));
-    content.setAttribute('y', String(y + 6));
-    content.setAttribute('width', String(width - 12));
-    content.setAttribute('height', String(cardHeight - 12));
+  function lensRadiusPx(profile){
+    if(!profile || !profile.geometry) return 0;
+    return profile.geometry.lens_radius_at_end_m * profile.geometry.scale_px_per_m;
+  }
 
-    const body = document.createElement('div');
-    body.className = 'card-content';
+  function beamRadiusPx(profile){
+    if(!profile || !profile.geometry) return 0;
+    return profile.geometry.beam_radius_at_end_m * profile.geometry.scale_px_per_m;
+  }
 
-    const header = document.createElement('div');
-    header.className = 'card-header';
-    const title = document.createElement('div');
-    title.className = 'card-title';
-    title.textContent = model ? `${label} • ${model.id}` : label;
-    header.appendChild(title);
-
-    const gains = document.createElement('div');
-    gains.className = 'card-gains';
-    if(stage){
-      const gainLine = document.createElement('div');
-      gainLine.className = 'gain ' + (stage.delta_db >= 0 ? 'positive' : '');
-      gainLine.textContent = (stage.delta_db >= 0 ? '+' : '') + stage.delta_db.toFixed(2) + ' dB';
-      gains.appendChild(gainLine);
-      const powerLine = document.createElement('div');
-      powerLine.className = 'power';
-      powerLine.textContent = `${stage.p_in_dbm.toFixed(1)} → ${stage.p_out_dbm.toFixed(1)} dBm`;
-      gains.appendChild(powerLine);
+  function renderBeamVisual(currentEval, maxEval, currentDistance, opts){
+    const container = document.getElementById('beamVisual');
+    const readout = document.getElementById('beamCaptureReadout');
+    if(!container) return null;
+    container.innerHTML = '';
+    const zoomMode = opts && opts.zoomToLens;
+    const targetEval = zoomMode && maxEval && maxEval.eval ? maxEval.eval : currentEval;
+    if(!targetEval || !targetEval.beam_profile){
+      container.style.display = 'none';
+      state.beam.profile = null;
+      state.beam.svgRefs = null;
+      if(readout) readout.textContent = 'Capture: —';
+      return null;
     }
-    header.appendChild(gains);
-    body.appendChild(header);
+    container.style.display = 'block';
 
-    const meta = document.createElement('div');
-    meta.className = 'card-body';
-    if(model && type === 'receiver_array' && hasActiveArray(model)){
-      meta.textContent = `${Number(model.count||0)} elements • ${Number(model.sub_aperture_mm||0)} mm • fill ${Math.round((model.fill_factor||0)*100)}%`;
-    } else if(model){
-      meta.textContent = model.tool_tip || 'Selected component';
+    const L = maxEval ? maxEval.distance_m : currentDistance;
+    const profile = zoomMode
+      ? (targetEval.beam_profile_zoom || targetEval.beam_profile)
+      : (maxEval && maxEval.eval && maxEval.eval.beam_profile ? maxEval.eval.beam_profile : currentEval.beam_profile);
+    const distanceLabelKm = maxEval ? (maxEval.distance_m/1000).toFixed(2) : (currentDistance/1000).toFixed(2);
+
+    let svgString = profile.svg.replace('##DIST_KM##', distanceLabelKm);
+    if(maxEval && maxEval.eval && maxEval.eval.beam_profile){
+      const divMax = maxEval.eval.beam_profile.divergence_mrad != null ? maxEval.eval.beam_profile.divergence_mrad.toFixed(2) : null;
+      if(divMax){
+        svgString = svgString.replace('##DIV_MRAD##', divMax);
+      }
+    }
+    const divCurr = currentEval.beam_profile.divergence_mrad != null ? currentEval.beam_profile.divergence_mrad.toFixed(2) : null;
+    if(divCurr){
+      svgString = svgString.replace('##DIV_MRAD##', divCurr);
+    }
+    /* compatibility with updated SVG that has no placeholder */
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgString, 'image/svg+xml');
+    const svgEl = doc.documentElement;
+
+    if(svgEl){
+      svgEl.setAttribute('width', '100%');
+      svgEl.setAttribute('height', '100%');
+      svgEl.removeAttribute('xmlns:xlink');
+      const lensOverlay = doc.querySelector('#lensOverlay');
+      let captureOverlay = doc.querySelector('#captureOverlay');
+      if(!captureOverlay){
+        captureOverlay = doc.createElementNS(SVG_NS, 'circle');
+        captureOverlay.setAttribute('id', 'captureOverlay');
+        captureOverlay.setAttribute('fill', 'rgba(15,118,110,0.35)');
+        captureOverlay.setAttribute('stroke', 'none');
+        captureOverlay.setAttribute('visibility', 'hidden');
+        const envelopeGroup = doc.querySelector('#beamEnvelopeGroup');
+        if(envelopeGroup && envelopeGroup.parentNode){
+          envelopeGroup.parentNode.insertBefore(captureOverlay, envelopeGroup.nextSibling);
+        } else {
+          doc.documentElement.appendChild(captureOverlay);
+        }
+      }
+      container.appendChild(svgEl);
+      state.beam.svgRefs = {
+        svg: svgEl,
+        envelope: svgEl.querySelector('#beamEnvelope'),
+        lens: lensOverlay,
+        capture: captureOverlay,
+        geometry: profile.geometry,
+        windowStart: profile.window_start_m,
+        windowEnd: profile.window_end_m
+      };
+      state.beam.profile = profile;
+      if(zoomMode){
+        requestAnimationFrame(() => {
+          container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+        });
+      }
+      updateBeamCaptureReadout(profile, 0);
+      if(state.beam.jitterActive && profile && profile.geometry && state.beam.autoAlign !== false){
+        initBeamJitterAnimation();
+      } else {
+        stopBeamJitter();
+      }
+    }
+
+    return profile;
+  }
+
+  function alignChannelColumn(){
+    const channel = document.querySelector('.channel-column .column-title');
+    const tx = document.querySelector('.tx-column .column-title');
+    const rx = document.querySelector('.rx-column .column-title');
+    const column = document.querySelector('.channel-column');
+    if(!channel || !tx || !rx || !column) return;
+    const targetTop = Math.max(tx.offsetTop, rx.offsetTop);
+    const channelTop = channel.offsetTop;
+    const delta = targetTop - channelTop;
+    state.ui.channelOffsetPx = Math.max(delta, 0);
+    column.style.setProperty('--channel-offset', `${state.ui.channelOffsetPx}px`);
+  }
+
+  function toggleGroup(groupKey){
+    if(state.canvas.expandedGroups.has(groupKey)) {
+      state.canvas.expandedGroups.delete(groupKey);
     } else {
-      meta.textContent = 'Not selected';
+      state.canvas.expandedGroups.add(groupKey);
     }
-    body.appendChild(meta);
-
-    content.appendChild(body);
-    root.appendChild(content);
-
-    const hitBox = document.createElementNS(SVG_NS, 'rect');
-    hitBox.setAttribute('x', String(x));
-    hitBox.setAttribute('y', String(y));
-    hitBox.setAttribute('width', String(width));
-    hitBox.setAttribute('height', String(cardHeight));
-    hitBox.setAttribute('fill', 'transparent');
-    hitBox.setAttribute('cursor', type && model ? 'pointer' : 'default');
-    if(type && model){
-      hitBox.addEventListener('click', () => {
-        state.selection[type] = model.id;
-        saveSession();
-        renderPartsList();
-        renderInspector(type, model);
-        renderAll();
-      });
-    }
-    root.appendChild(hitBox);
+    renderCanvas();
   }
 
-  function bindCanvasInteractions(svg){
-    if(state.canvas.bound) return;
-    state.canvas.bound = true;
-    svg.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const rect = svg.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const prevZoom = state.canvas.zoom;
-      const factor = Math.exp(-e.deltaY * 0.001);
-      const nextZoom = Math.min(5, Math.max(0.4, prevZoom * factor));
-      const worldX = (mx - state.canvas.panX) / prevZoom;
-      const worldY = (my - state.canvas.panY) / prevZoom;
-      state.canvas.zoom = nextZoom;
-      state.canvas.panX = mx - worldX * nextZoom;
-      state.canvas.panY = my - worldY * nextZoom;
-      renderCanvas();
-    }, { passive: false });
-
-    svg.addEventListener('mousedown', (e) => {
-      state.canvas.isPanning = true;
-      state.canvas.lastX = e.clientX;
-      state.canvas.lastY = e.clientY;
-      svg.style.cursor = 'grabbing';
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if(!state.canvas.isPanning) return;
-      const dx = e.clientX - state.canvas.lastX;
-      const dy = e.clientY - state.canvas.lastY;
-      state.canvas.lastX = e.clientX;
-      state.canvas.lastY = e.clientY;
-      state.canvas.panX += dx;
-      state.canvas.panY += dy;
-      renderCanvas();
-    });
-
-    window.addEventListener('mouseup', () => {
-      state.canvas.isPanning = false;
-      svg.style.cursor = 'default';
-    });
-
-    svg.addEventListener('dblclick', () => {
-      state.canvas.zoom = 1;
-      state.canvas.panX = 0;
-      state.canvas.panY = 0;
-      renderCanvas();
-    });
+  function toggleComponent(componentKey){
+    if(state.canvas.expandedComponents.has(componentKey)) {
+      state.canvas.expandedComponents.delete(componentKey);
+    } else {
+      state.canvas.expandedComponents.add(componentKey);
+    }
+    renderCanvas();
   }
+
+  function expandForStage(stageType){
+    const column = stageColumnMap[stageType];
+    if(!column) return;
+    if(column.groupKey){
+      state.canvas.expandedGroups.add(column.groupKey);
+    }
+    if(column.componentKey){
+      state.canvas.expandedComponents.add(column.componentKey);
+    }
+  }
+
+  function stopBeamJitter(){
+    if(state.beam.animation){
+      cancelAnimationFrame(state.beam.animation);
+      state.beam.animation = null;
+    }
+    const refs = state.beam.svgRefs;
+    if(refs && refs.envelope){
+      refs.envelope.setAttribute('transform', '');
+      refs.lens && refs.lens.setAttribute('transform', '');
+    }
+  }
+
+  function initBeamJitterAnimation(){
+    stopBeamJitter();
+    const refs = state.beam.svgRefs;
+    const profile = state.beam.profile;
+    if(!refs || !profile || !profile.geometry) return;
+
+    const { svg, geometry, capture } = refs;
+    const beamRadius = beamRadiusPx(profile);
+    const lensRadius = lensRadiusPx(profile);
+    const lensCenterX = geometry.marginX + (geometry.windowEnd_m - geometry.windowStart_m) * geometry.scale_px_per_m;
+    const lensCenterY = geometry.midY;
+
+    let beamDot = svg.querySelector('#beamCentroid');
+    if(!beamDot){
+      beamDot = document.createElementNS(SVG_NS, 'circle');
+      beamDot.setAttribute('id', 'beamCentroid');
+      beamDot.setAttribute('r', Math.max(beamRadius * 0.2, 2));
+      beamDot.setAttribute('fill', 'rgba(59,130,246,0.9)');
+      beamDot.setAttribute('stroke', '#1d4ed8');
+      beamDot.setAttribute('stroke-width', '1');
+      svg.appendChild(beamDot);
+    }
+
+    let lensDot = svg.querySelector('#lensCentroid');
+    if(!lensDot){
+      lensDot = document.createElementNS(SVG_NS, 'circle');
+      lensDot.setAttribute('id', 'lensCentroid');
+      lensDot.setAttribute('r', Math.max(lensRadius * 0.25, 2));
+      lensDot.setAttribute('fill', 'rgba(13,148,136,0.35)');
+      lensDot.setAttribute('stroke', '#0f766e');
+      lensDot.setAttribute('stroke-width', '1');
+      svg.appendChild(lensDot);
+    }
+
+    if(capture){
+      capture.setAttribute('cx', lensCenterX.toFixed(2));
+      capture.setAttribute('cy', lensCenterY.toFixed(2));
+      capture.setAttribute('r', lensRadius.toFixed(2));
+      capture.setAttribute('visibility', 'visible');
+    }
+
+    const readout = document.getElementById('beamCaptureReadout');
+
+    const durationMs = 6000;
+    const frameHz = 60;
+    const totalFrames = Math.floor(durationMs / (1000/frameHz));
+
+    const residual = computePointingResidual();
+    const txSeries = synthesizeJitterSeries(residual.tx, totalFrames);
+    const rxSeries = synthesizeJitterSeries(residual.rx, totalFrames);
+
+    let frame = 0;
+    const manualSigma = state.config.channel.manual_jitter_mrad || 0;
+    const manualSeries = manualSigma > 0 ? synthesizeJitterSeries({ sigma_mrad: manualSigma, bandwidth_hz: 2 }, totalFrames) : null;
+
+    const animate = () => {
+      if(!state.beam.jitterActive){
+        stopBeamJitter();
+        return;
+      }
+      const tx = txSeries[frame % txSeries.length];
+      const rx = state.beam.autoAlign ? rxSeries[frame % rxSeries.length] : 0;
+      const manual = (!state.beam.autoAlign && manualSeries) ? manualSeries[frame % manualSeries.length] : 0;
+      const relative = (tx + manual) - rx;
+
+      const offsetPx = relative * geometry.scale_px_per_m;
+      const beamCx = lensCenterX;
+      const beamCy = lensCenterY + offsetPx;
+
+      beamDot.setAttribute('cx', beamCx.toFixed(2));
+      beamDot.setAttribute('cy', beamCy.toFixed(2));
+
+      lensDot.setAttribute('cx', lensCenterX.toFixed(2));
+      lensDot.setAttribute('cy', lensCenterY.toFixed(2));
+
+      const captureFraction = updateBeamCaptureReadout(profile, Math.abs(relative));
+      if(capture){
+        capture.setAttribute('fill', `rgba(15,118,110,${0.15 + 0.55 * captureFraction})`);
+      }
+      checkAlignmentLock();
+      if(readout){
+        readout.textContent = `Capture: ${(captureFraction*100).toFixed(1)}%`;
+      }
+      state.beam.capture.fraction = captureFraction;
+
+      frame++;
+      state.beam.animation = requestAnimationFrame(animate);
+    };
+    animate();
+  }
+
+
+
+
+
+
+
 
   function computeMaxReachMeters(selDb, config){
     try{
@@ -1268,14 +1470,21 @@
       const fecId = config.global.fec_model;
       const fec = (state.db.categories.find(c => c.type==='fec')||{models:[]}).models.find(m => m.id===fecId);
       const cg = fec && fec.coding_gain_db ? Number(fec.coding_gain_db) : 0;
+      const overhead = fec && fec.overhead_pct ? Number(fec.overhead_pct) : 0;
       const targetBer = config.global.target_ber || 1e-12;
+      const rosa = getSelected('rosa');
+      const tia = getSelected('tia') || getSelected('tia_model');
       const okAt = (L) => {
         const cfg = JSON.parse(JSON.stringify(config));
         cfg.global.distance_m = Math.max(L, 0);
         const r = window.Calc.Evaluator.evaluate(selDb, cfg);
-        const margin = r.prx_dbm - sens;
-        const pre = window.Calc.BER.estimatePreFecBer(margin, cfg.global.bitrate_gbps);
-        const post = window.Calc.BER.applyFecGain(pre, cg, cfg.global.bitrate_gbps);
+        const berRes = window.Calc.BER.estimatePostFecBer({
+          receivedPower_dbm: r.prx_dbm,
+          rosa,
+          tia,
+          bitrate_gbps: cfg.global.bitrate_gbps
+        }, cg, overhead);
+        const post = berRes.ber_post != null ? berRes.ber_post : Infinity;
         return post <= targetBer;
       };
       // Coarse sweep to bracket
@@ -1325,9 +1534,19 @@
     return nodes;
   }
 
+  function safeFixedNumber(val, digits){
+    if(typeof val !== 'number' || !isFinite(val)) return null;
+    return Number(val.toFixed(digits));
+  }
+
+  function safeFixedString(val, digits){
+    if(typeof val !== 'number' || !isFinite(val)) return '—';
+    return val.toFixed(digits);
+  }
+
   function renderKPIs(){
     const kpiBox = document.getElementById('kpis');
-    const warnBox = document.getElementById('warnings');
+      const warnBox = document.getElementById('warnings');
     const maxPanel = document.getElementById('maxReachExplain');
     if(warnBox) warnBox.innerHTML = '';
     if(maxPanel) maxPanel.innerHTML = '';
@@ -1335,10 +1554,11 @@
     const res = window.Calc && window.Calc.Evaluator && window.Calc.Evaluator.evaluate(selDb, state.config);
     const ctrl = (res && window.Calc.Control) ? window.Calc.Control.estimateControlRequirements(
       state.config.global.distance_m,
-      res.beam_radius_m,
+      res ? res.beam_radius_m : 0,
       state.config.channel.pointing_jitter_mrad_rms,
       1.0
     ) : null;
+    state.metrics.controlRaw = ctrl;
     const act = (res && window.Calc.Control) ? window.Calc.Control.estimateActuatorBandwidthTargets(
       state.config.global.wavelength_nm,
       state.config.global.distance_m,
@@ -1353,10 +1573,13 @@
       act ? act.gimbal_bw_hz : 0,
       act ? act.fsm_bw_hz : 0
     ) : null;
-    // combiner IL exposed in KPIs
+    state.metrics.controlResidual = psdRes ? {
+      tx: { sigma_mrad: (psdRes.sigma_mrad || 0), bandwidth_hz: act ? act.gimbal_bw_hz || 10 : 10 },
+      rx: { sigma_mrad: (psdRes.sigma_mrad || 0) * 0.8, bandwidth_hz: act ? act.fsm_bw_hz || 50 : 50 }
+    } : null;
     const rxArr = getSelected('receiver_array');
     const comb = getSelected('combiner');
-    let combiner_il_db = rxArr ? (rxArr.combiner_il_db || 0) : 0;
+    let combiner_il_db = rxArr ? (typeof rxArr.combiner_il_db === 'number' ? rxArr.combiner_il_db : 0) : 0;
     if(rxArr && comb && (comb.base_il_db != null) && (comb.per_stage_il_db != null)){
       const stages = Math.ceil(Math.log2(Math.max(rxArr.count||1,1)));
       combiner_il_db = comb.base_il_db + comb.per_stage_il_db * stages;
@@ -1365,31 +1588,32 @@
     const gim = getSelected('gimbal');
     const fsmOk = fsm ? (fsm.bandwidth_hz >= (ctrl ? ctrl.fsm_bw_hz : 0) && fsm.resolution_urad <= (ctrl ? ctrl.resolution_urad : Infinity) && fsm.range_mrad >= (ctrl ? ctrl.range_mrad : 0)) : true;
     const gimOk = gim ? (gim.bandwidth_hz >= (ctrl ? ctrl.gimbal_bw_hz : 0) && gim.resolution_mrad <= (ctrl ? ctrl.range_mrad : Infinity)) : true;
+    const berMetrics = res ? computeBerMetrics(res) : null;
     const kpis = {
       cost_usd: sumField('cost_usd'),
       weight_g: sumField('weight_g'),
       power_w: sumField('power_w'),
-      prx_dbm_at_distance: res ? Number(res.prx_dbm.toFixed(2)) : null,
+      prx_dbm_at_distance: safeFixedNumber(res ? res.prx_dbm : null, 2),
       sensitivity_dbm: res ? res.sens_dbm : null,
-      link_margin_db: res ? Number(res.margin_db.toFixed(2)) : null,
-      ber_prefec: res ? berPreFec(res.margin_db) : null,
-      ber_postfec: res ? berPostFec(res.margin_db) : null,
-      divergence_mrad: res ? Number(res.divergence_mrad.toFixed(3)) : null,
-      beam_radius_m: res ? Number(res.beam_radius_m.toFixed(3)) : null,
-      atm_loss_db: res ? Number(res.atm_db.toFixed(2)) : null,
-      pointing_loss_db: res ? Number(res.point_db.toFixed(2)) : null,
-      scint_margin_db: res ? Number(res.scin_db.toFixed(2)) : null,
-      geometric_coupling_db: res ? Number(res.geo_db.toFixed(2)) : null,
-      combiner_il_db: Number(combiner_il_db.toFixed(2)),
-      ctrl_required_sigma_mrad: ctrl ? Number(ctrl.required_sigma_mrad.toFixed(3)) : null,
+      link_margin_db: safeFixedNumber(res ? res.margin_db : null, 2),
+      ber_prefec: berMetrics ? berMetrics.pre : null,
+      ber_postfec: berMetrics ? berMetrics.post : null,
+      divergence_mrad: safeFixedNumber(res ? res.divergence_mrad : null, 3),
+      beam_radius_m: safeFixedNumber(res ? res.beam_radius_m : null, 3),
+      atm_loss_db: safeFixedNumber(res ? res.atm_db : null, 2),
+      pointing_loss_db: safeFixedNumber(res ? res.point_db : null, 2),
+      scint_margin_db: safeFixedNumber(res ? res.scin_db : null, 2),
+      geometric_coupling_db: safeFixedNumber(res ? res.geo_db : null, 2),
+      combiner_il_db: safeFixedNumber(combiner_il_db, 2),
+      ctrl_required_sigma_mrad: safeFixedNumber(ctrl ? ctrl.required_sigma_mrad : null, 3),
       ctrl_fsm_bw_hz: ctrl ? ctrl.fsm_bw_hz : null,
       ctrl_gimbal_bw_hz: ctrl ? ctrl.gimbal_bw_hz : null,
-      ctrl_resolution_urad: ctrl ? Number(ctrl.resolution_urad.toFixed(1)) : null,
-      ctrl_range_mrad: ctrl ? Number(ctrl.range_mrad.toFixed(2)) : null,
+      ctrl_resolution_urad: safeFixedNumber(ctrl ? ctrl.resolution_urad : null, 1),
+      ctrl_range_mrad: safeFixedNumber(ctrl ? ctrl.range_mrad : null, 2),
       greenwood_hz: act ? act.greenwood_hz : null,
       target_gimbal_bw_hz: act ? act.gimbal_bw_hz : null,
       target_fsm_bw_hz: act ? act.fsm_bw_hz : null,
-      residual_pointing_sigma_mrad_psd: psdRes ? Number(psdRes.sigma_mrad.toFixed(3)) : null,
+      residual_pointing_sigma_mrad_psd: safeFixedNumber(psdRes ? psdRes.sigma_mrad : null, 3),
       fsm_ok: fsmOk,
       gimbal_ok: gimOk
     };
@@ -1400,26 +1624,47 @@
       warnBox.innerHTML = warnings.map(w => '<div class="warning">' + w + '</div>').join('');
     }
     const rows = Object.entries(kpis).map(([k,v]) => `<div class="kpi-row"><span>${k}</span><span>${v != null ? v : '—'}</span></div>`).join('');
-    kpiBox.innerHTML = `<h4>Key Metrics</h4><div class="kpi-list">${rows}</div>`;
+    if(kpiBox){
+      kpiBox.innerHTML = `<h4>Key Metrics</h4><div class="kpi-list">${rows}</div>`;
+    }
 
-    if(maxPanel && res){
-      maxPanel.innerHTML = buildMaxDistanceSummary(res, selDb);
+    if(res){
+      const maxReachMeters = computeMaxReachMeters(selDb, state.config);
+      if(maxPanel){
+        maxPanel.innerHTML = buildMaxDistanceSummary(res, selDb, maxReachMeters);
+      }
+    } else {
+      if(kpiBox){
+        kpiBox.innerHTML = '<p>No evaluation available.</p>';
+      }
+      if(maxPanel){
+        maxPanel.innerHTML = '';
+      }
     }
   }
 
-  function berPreFec(margin_db){
-    const br = state.config.global.bitrate_gbps;
-    return Number(window.Calc.BER.estimatePreFecBer(margin_db, br).toExponential(2));
-  }
-
-  function berPostFec(margin_db){
+  function computeBerMetrics(linkEval){
     const br = state.config.global.bitrate_gbps;
     const fecId = state.config.global.fec_model;
     const fec = (state.db.categories.find(c => c.type==='fec')||{models:[]}).models.find(m => m.id===fecId);
     const cg = fec && fec.coding_gain_db ? Number(fec.coding_gain_db) : 0;
-    const pre = window.Calc.BER.estimatePreFecBer(margin_db, br);
-    const post = window.Calc.BER.applyFecGain(pre, cg, br);
-    return Number(post.toExponential(2));
+    const overhead = fec && fec.overhead_pct ? Number(fec.overhead_pct) : 0;
+    const rosa = getSelected('rosa');
+    const tia = getSelected('tia') || getSelected('tia_model');
+    const params = {
+      receivedPower_dbm: linkEval.prx_dbm,
+      rosa,
+      tia,
+      bitrate_gbps: br
+    };
+    const ctx = { sensitivity_dbm: linkEval.sens_dbm, margin_db: linkEval.margin_db };
+    const result = window.Calc.BER.estimatePostFecBer(params, cg, overhead, ctx);
+    if(!result || result.ber == null) return null;
+    return {
+      pre: Number(result.ber.toExponential(2)),
+      post: result.ber_post != null ? Number(result.ber_post.toExponential(2)) : null,
+      snr: result.snr
+    };
   }
 
   function collectWarnings(){
@@ -1475,6 +1720,12 @@
     if(activeArray && !getSelected('combiner')){
       warns.push('Receiver array selected: add a combiner to model splitter-tree IL.');
     }
+    if(state.ui && state.ui.extraWarnings){
+      warns.push(...state.ui.extraWarnings);
+    }
+    if(state.beam && state.beam.locked === false){
+      warns.push('Alignment loop unlocked: capture too low for servo hold.');
+    }
     return warns;
   }
 
@@ -1526,10 +1777,19 @@
 
     const sensEval = window.Calc && window.Calc.Evaluator ? window.Calc.Evaluator.evaluate(selDb, state.config) : null;
     const sens = sensEval ? sensEval.sens_dbm : -40;
+    const rosa = getSelected('rosa');
+    const tia = getSelected('tia') || getSelected('tia_model');
+    const brGbps = state.config.global.bitrate_gbps;
     const path2 = sweep.map((d,i) => {
       const x = margin + (d.L/maxL) * plotW;
+      const berRes = window.Calc.BER.estimateBer({
+        receivedPower_dbm: d.prx_dbm,
+        rosa,
+        tia,
+        bitrate_gbps: brGbps
+      });
       const marginDb = d.prx_dbm - sens;
-      const ber = window.Calc.BER.estimatePreFecBer(marginDb, state.config.global.bitrate_gbps);
+      const ber = (berRes && berRes.ber != null) ? berRes.ber : window.Calc.BER.berFromMargin(marginDb, brGbps);
       const log = Math.log10(Math.max(ber, 1e-15));
       const y = margin + (1 - (log + 15)/14) * plotH;
       return (i===0?'M':'L') + x + ' ' + y;
@@ -1607,6 +1867,90 @@
     const txLaunch = groupTop('Launch Optics', txColumn);
     const rxDetector = groupTop('Detector & Front-End', rxColumn);
     return { txLaunch, rxDetector };
+  }
+
+  function synthesizeJitterSeries(config, totalFrames){
+    const { sigma_mrad, bandwidth_hz } = config;
+    const sigma_rad = (sigma_mrad || 0) / 1000;
+    const bw = Math.max(bandwidth_hz || 5, 0.5);
+    const dt = 1/60;
+    const alpha = Math.exp(-2*Math.PI*bw*dt);
+    const out = [];
+    let stateVal = sigma_rad * (Math.random()-0.5);
+    for(let i=0;i<totalFrames;i++){
+      const noise = sigma_rad * (Math.random()-Math.random());
+      stateVal = alpha * stateVal + (1-alpha) * noise;
+      out.push(stateVal * (state.beam.distance_m || 0));
+    }
+    return out;
+  }
+
+  function computePointingResidual(){
+    const res = state.metrics.controlResidual;
+    if(res) return res;
+    const ctrl = state.metrics.controlRaw;
+    if(ctrl){
+      const sigma = state.config.channel.pointing_jitter_mrad_rms || 0.2;
+      return {
+        tx: { sigma_mrad: sigma * 0.5, bandwidth_hz: ctrl.gimbal_bw_hz || 10 },
+        rx: { sigma_mrad: sigma * 0.5, bandwidth_hz: ctrl.fsm_bw_hz || 50 }
+      };
+    }
+    const sigma = state.config.channel.pointing_jitter_mrad_rms || 0.2;
+    return {
+      tx: { sigma_mrad: sigma, bandwidth_hz: 5 },
+      rx: { sigma_mrad: sigma, bandwidth_hz: 20 }
+    };
+  }
+
+  function gaussianCaptureFraction(offset_m, profile){
+    if(!profile || !profile.geometry) return 1;
+    const w_m = Math.max(profile.geometry.beam_radius_at_end_m || 0, 1e-9);
+    const a_m = Math.max(profile.geometry.lens_radius_at_end_m || 0, 0);
+    if(a_m <= 0) return 0;
+    const encircled = 1 - Math.exp(-2 * Math.pow(a_m / w_m, 2));
+    const shiftPenalty = Math.exp(-2 * Math.pow(offset_m / w_m, 2));
+    return Math.min(1, Math.max(0, encircled * shiftPenalty));
+  }
+
+  function updateBeamCaptureReadout(profile, offset_m){
+    const readout = document.getElementById('beamCaptureReadout');
+    if(!readout) return;
+    const frac = gaussianCaptureFraction(offset_m || 0, profile);
+    readout.textContent = `Capture: ${(frac * 100).toFixed(1)}%`;
+    readout.classList.toggle('low-capture', frac < 0.2);
+    state.beam.capture.fraction = frac;
+    state.beam.capture.history.push({ at: performance.now(), frac });
+    const cutoff = performance.now() - 3000;
+    state.beam.capture.history = state.beam.capture.history.filter(item => item.at >= cutoff);
+    return frac;
+  }
+
+  function checkAlignmentLock(){
+    const history = state.beam.capture.history || [];
+    if(history.length === 0) return true;
+    const avg = history.reduce((sum, item) => sum + item.frac, 0) / history.length;
+    const locked = avg >= 0.2;
+    state.beam.locked = locked;
+    if(!locked && state.beam.autoAlign){
+      state.beam.autoAlign = false;
+      state.beam.jitterActive = false;
+      const jitterToggle = document.getElementById('beamJitterToggle');
+      const autoAlignToggle = document.getElementById('beamAutoAlign');
+      jitterToggle && jitterToggle.classList.remove('active');
+      autoAlignToggle && (autoAlignToggle.checked = false);
+      stopBeamJitter();
+      addWarning('Alignment lost: auto-align disabled due to low capture.');
+    }
+    return locked;
+  }
+
+  function addWarning(msg){
+    state.ui = state.ui || {};
+    state.ui.extraWarnings = state.ui.extraWarnings || [];
+    if(!state.ui.extraWarnings.includes(msg)){
+      state.ui.extraWarnings.push(msg);
+    }
   }
 })();
 

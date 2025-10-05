@@ -75,33 +75,68 @@
       </aside>
       <section class="canvas">
         <div id="canvasGuide">
-          <p>Left: transmitter blocks. Middle: channel effects. Right: receiver blocks. Blue width shows beam divergence. Markers on the axis show current distance (blue) and computed max reach (red).</p>
+          <p>Left: transmitter blocks. Middle: channel effects. Right: receiver blocks. Click groups/components to expand details. Click arrows to expand/collapse.</p>
         </div>
-        <svg id="beamCanvas" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="beamCanvas" class="canvas-container">
+          <div class="canvas-content">
+            <div class="tx-column column">
+              <h3 class="column-title">Transmitter</h3>
+              <div id="txGroups" class="groups-container"></div>
+            </div>
+            <div class="channel-column column">
+              <h3 class="column-title">Free-Space Channel</h3>
+              <div class="beam-controls">
+                <button id="beamZoomToggle">Zoom Lens</button>
+                <button id="beamJitterToggle">Play Jitter</button>
+                <label class="beam-toggle"><input type="checkbox" id="beamAutoAlign" checked> Auto Align</label>
+              </div>
+              <div class="beam-visual" id="beamVisual"></div>
+              <div id="beamCaptureReadout" class="beam-readout">Capture: —</div>
+              <div id="channelGroups" class="groups-container"></div>
+            </div>
+            <div class="rx-column column">
+              <h3 class="column-title">Receiver</h3>
+              <div id="rxGroups" class="groups-container"></div>
+            </div>
+          </div>
+        </div>
       </section>
       <aside class="sidebar right">
         <div class="props-section">
-          <h3>Properties</h3>
-          <div id="warnings"></div>
-          <div id="inspector"></div>
+          <div class="tab-container">
+            <div class="tab-header">
+              <button class="tab-button active" data-tab="properties">Properties</button>
+              <button class="tab-button" data-tab="metrics">Key Metrics</button>
+              <button class="tab-button" data-tab="plots">Plots</button>
+              <button class="tab-button" data-tab="gain">Gain / Loss</button>
+            </div>
+            <div class="tab-panels">
+              <div id="tab-properties" class="tab-panel active">
+                <div id="warnings"></div>
+                <div id="inspector"></div>
+              </div>
+              <div id="tab-metrics" class="tab-panel">
+                <div id="kpis" class="tab-section"></div>
+              </div>
+              <div id="tab-plots" class="tab-panel">
+                <div class="plot-card">
+                  <h4>Received Power vs Distance</h4>
+                  <div id="prxPlot" class="plot-area"></div>
+                </div>
+                <div class="plot-card">
+                  <h4>BER vs Distance</h4>
+                  <div id="berPlot" class="plot-area"></div>
+                </div>
+              </div>
+              <div id="tab-gain" class="tab-panel">
+                <div id="stageBreakdown" class="tab-section"></div>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="maxReachExplain" class="summary-panel"></div>
       </aside>
     </main>
-    <footer class="metrics">
-      <div id="kpis"></div>
-      <div class="plots">
-        <div class="plot-card">
-          <h4>Received Power vs Distance</h4>
-          <div id="prxPlot" class="plot-area"></div>
-        </div>
-        <div class="plot-card">
-          <h4>BER vs Distance</h4>
-          <div id="berPlot" class="plot-area"></div>
-        </div>
-      </div>
-      <div id="stageBreakdown" class="summary-panel"></div>
-    </footer>
     <script src="js/calc/turbulence.js"></script>
     <script src="js/calc/pointing.js"></script>
     <script src="js/calc/ber.js"></script>
@@ -110,6 +145,4 @@
     <script src="components.db.js"></script>
     <script src="app.js"></script>
   </body>
-  </html>
-
-
+</html>

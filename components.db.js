@@ -22,7 +22,8 @@ window.COMPONENTS_DB = {
       {"id": "real-thorlabs-grin-1p8-0p23", "vendor": "Thorlabs", "pitch": 0.23, "diameter_mm": 1.8, "working_distance_mm": 0.5, "residual_divergence_mrad": 2.0, "il_db": 0.5, "ar_center_nm": 1550, "dual_lambda_ok": true, "source_url": "https://www.thorlabs.com"}
     ]},
     {"type": "tx_telescope", "models": [
-      {"id": "tx-tel-5x-20mm", "aperture_mm": 20, "magnification": 5, "residual_divergence_mrad": 0.2, "throughput": 0.9}
+      {"id": "tx-tel-5x-20mm", "aperture_mm": 20, "magnification": 5, "residual_divergence_mrad": 0.2, "output_waist_mm": 2.4, "throughput": 0.9},
+      {"id": "real-thorlabs-galilean-10x", "vendor": "Thorlabs", "source_url": "https://www.thorlabs.com/newgrouppage9.cfm?objectgroup_id=263", "aperture_mm": 25.4, "magnification": 10, "residual_divergence_mrad": 0.12, "output_waist_mm": 3.6, "throughput": 0.88, "cost_usd": 460, "weight_g": 120, "tool_tip": "Thorlabs 10× NIR Galilean beam expander."}
     ]},
     {"type": "voa", "models": [
       {"id": "voa-0-10db-1550", "range_db": 10, "il_db": 0.6, "wavelength_nm": 1550}
@@ -102,10 +103,13 @@ window.COMPONENTS_DB = {
     {"type": "expanded_beam", "models": [
       {"id": "ebo-mini", "beam_diameter_mm": 1.0, "divergence_mrad": 2.0, "il_db": 1.0, "rl_db": 35}
     ]},
-    {"type": "laser_driver", "models": [{"id": "drv-abc123", "vendor": "ExampleCo", "bitrate_gbps_max": 10, "power_w": 0.4, "cost_usd": 12, "weight_g": 1.2}]},
-    {"type": "tosa", "models": [{"id": "tosa-1550-0dbm", "wavelength_nm": 1550, "optical_power_dbm": 0, "supports_bitrates": [0.1, 1, 10], "power_w": 0.2, "cost_usd": 50, "weight_g": 1.8, "tool_tip": "DFB-based TOSA with 0 dBm launch."}]},
-    {"type": "collimator", "models": [{"id": "col-grin-2mm", "aperture_mm": 2.0, "output_divergence_mrad": 5.0, "insertion_loss_db": 0.7, "power_w": 0, "cost_usd": 30, "weight_g": 1.0, "tool_tip": "Compact GRIN collimator for 1550 nm."}]},
-    {"type": "beam_expander", "models": [{"id": "exp-5x-mini", "magnification": 5, "residual_divergence_mrad": 0.5, "insertion_loss_db": 0.5, "cost_usd": 80, "weight_g": 8, "tool_tip": "5× beam expander to reduce divergence."}]},
+    {"type": "laser_driver", "models": [{"id": "drv-abc123", "vendor": "ExampleCo", "bitrate_gbps_max": 10, "modulation_current_mapp": {"1": [4, 20], "10": [10, 40]}, "power_w": 0.4, "cost_usd": 12, "weight_g": 1.2}]},
+    {"type": "tosa", "models": [
+      {"id": "tosa-1550-0dbm", "wavelength_nm": 1550, "optical_power_dbm": 0, "supports_bitrates": [0.1, 1, 10], "beam_waist_mm": 0.35, "m2": 1.2, "oma_dbm": -3, "extinction_ratio_db": 10, "monitor_pd": true, "requires_driver": true, "power_w": 0.2, "cost_usd": 50, "weight_g": 1.8, "tool_tip": "DFB-based TOSA with 0 dBm launch."},
+      {"id": "real-lumentum-dfb-3dbm", "vendor": "Lumentum", "source_url": "https://www.lumentum.com/en/communications-and-networking/datacom-transceivers/1550-nm-dfb-tosa", "wavelength_nm": 1550, "optical_power_dbm": 3, "supports_bitrates": [1, 10], "beam_waist_mm": 0.32, "m2": 1.1, "oma_dbm": 0, "extinction_ratio_db": 10.5, "monitor_pd": true, "requires_driver": true, "power_w": 0.25, "cost_usd": 95, "weight_g": 2.1, "tool_tip": "Lumentum 1550 nm DFB TOSA, +3 dBm typical."}
+    ]},
+    {"type": "collimator", "models": [{"id": "col-grin-2mm", "aperture_mm": 2.0, "output_divergence_mrad": 5.0, "insertion_loss_db": 0.7, "beam_waist_mm": 0.35, "m2": 1.3, "power_w": 0, "cost_usd": 30, "weight_g": 1.0, "tool_tip": "Compact GRIN collimator for 1550 nm."}]},
+    {"type": "beam_expander", "models": [{"id": "exp-5x-mini", "magnification": 5, "residual_divergence_mrad": 0.5, "output_waist_mm": 1.8, "insertion_loss_db": 0.5, "cost_usd": 80, "weight_g": 8, "tool_tip": "5× beam expander to reduce divergence."}]},
     {"type": "filter_dichroic", "models": [{"id": "dich-1310-1550", "lambda_pass_nm": 1310, "lambda_reflect_nm": 1550, "il_pass_db": 0.3, "il_reflect_db": 0.3, "cost_usd": 40, "weight_g": 2, "tool_tip": "Passes 1310 nm alignment and reflects 1550 nm data."}]},
     {"type": "tap_splitter", "models": [{"id": "tap-95-5", "ratio_main": 0.95, "ratio_tap": 0.05, "il_db": 0.5, "cost_usd": 20, "weight_g": 1.5, "tool_tip": "95/5 tap feeding alignment sensor."}]},
     {"type": "fsm", "models": [{"id": "fsm-1khz", "bandwidth_hz": 1000, "range_mrad": 5, "resolution_urad": 5, "latency_ms": 0.5, "power_w": 1.2, "cost_usd": 250, "weight_g": 25}, {"id": "real-mirrorcle-a7m20", "vendor": "Mirrorcle", "bandwidth_hz": 1000, "range_mrad": 7, "resolution_urad": 2, "latency_ms": 0.4, "power_w": 1.0, "cost_usd": 450, "weight_g": 20, "source_url": "https://www.mirrorcletech.com"}]},
@@ -143,8 +147,8 @@ window.COMPONENTS_DB = {
       {"id": "comb-tree-lowloss", "base_il_db": 0.5, "per_stage_il_db": 0.2, "notes": "Approx IL ≈ base + per_stage * ceil(log2 N)"},
       {"id": "comb-tree-standard", "base_il_db": 0.8, "per_stage_il_db": 0.35}
     ]},
-    {"type": "rosa", "models": [{"id": "rosa-pin-1g", "responsivity_a_w": 0.9, "bitrate_gbps_supported": [0.1, 1], "sensitivity_dbm": {"0.1": -28, "1": -20}, "overload_dbm": -3, "power_w": 0.35, "cost_usd": 45, "weight_g": 2.5}, {"id": "rosa-apd-10g", "responsivity_a_w": 0.6, "gain": 10, "bitrate_gbps_supported": [1, 10], "sensitivity_dbm": {"1": -24, "10": -18}, "overload_dbm": -6, "power_w": 0.6, "cost_usd": 120, "weight_g": 3}]},
-    {"type": "tia", "models": [{"id": "tia-10g-lownoise", "bandwidth_ghz": 7, "input_noise_pa_sqrtHz": 5e-12, "power_w": 0.4, "cost_usd": 35, "weight_g": 1}]},
+    {"type": "rosa", "models": [{"id": "rosa-pin-1g", "responsivity_a_w": 0.9, "bitrate_gbps_supported": [0.1, 1], "sensitivity_dbm": {"0.1": -28, "1": -20}, "overload_dbm": -3, "max_input_current_ma": 4, "max_photocurrent_ma": 4.5, "power_w": 0.35, "cost_usd": 45, "weight_g": 2.5}, {"id": "rosa-apd-10g", "responsivity_a_w": 0.6, "gain": 10, "bitrate_gbps_supported": [1, 10], "sensitivity_dbm": {"1": -24, "10": -18}, "overload_dbm": -6, "max_input_current_ma": 1.2, "max_photocurrent_ma": 1.5, "power_w": 0.6, "cost_usd": 120, "weight_g": 3}]},
+    {"type": "tia", "models": [{"id": "tia-10g-lownoise", "bandwidth_ghz": 7, "input_noise_pa_sqrtHz": 5e-12, "transimpedance_ohms": 2000, "vmax_out_mv": 400, "iip3_ma": 2.5, "gain_ppm_per_C": 250, "power_w": 0.4, "cost_usd": 35, "weight_g": 1}]},
     {"type": "la_cdr", "models": [{"id": "cdr-1g", "bitrate_gbps": 1, "jitter_tolerance_ui_pp": 0.5, "power_w": 0.5, "cost_usd": 30, "weight_g": 1.2}]},
     {"type": "fec", "models": [{"id": "fec-rs", "coding_gain_db": 3, "overhead_pct": 7, "latency_ms": 0.2, "power_w": 0.3, "cost_usd": 10, "weight_g": 1}]}
   ]
