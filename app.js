@@ -419,6 +419,11 @@
     if(maxReach == null || !isFinite(maxReach) || maxReach <= 0){
       return `<h4>Max Distance Explained</h4><p class="no-reach">The link budget never meets receiver sensitivity at any distance. Increase Tx power, reduce fixed losses, improve geometric capture, or choose a more sensitive receiver.</p>`;
     }
+    const residualSigma = (state && state.config && state.config.channel && typeof state.config.channel.pointing_jitter_mrad_rms === 'number')
+      ? state.config.channel.pointing_jitter_mrad_rms
+      : null;
+    const capture = (res && res.misc && typeof res.misc.capture_frac === 'number') ? res.misc.capture_frac : null;
+
     const rows = [
       {k: 'Tx power (dBm)', v: safeFixedString(res.ptx_dbm, 2)},
       {k: 'Total insertion (dB)', v: safeFixedString(res.il_db != null ? -res.il_db : null, 2)},
@@ -426,14 +431,29 @@
       {k: 'Scintillation margin (dB)', v: safeFixedString(res.scin_db != null ? -res.scin_db : null, 2)},
       {k: 'Pointing loss (dB)', v: safeFixedString(res.point_db != null ? -res.point_db : null, 2)},
       {k: 'Geometric gain (dB)', v: safeFixedString(res.geo_db, 2)},
+      {k: 'Residual pointing σ (mrad)', v: residualSigma != null ? residualSigma.toFixed(3) : '—'},
+      {k: 'Effective capture (%)', v: capture != null ? (capture*100).toFixed(1) : '—'},
       {k: 'Received power (dBm)', v: safeFixedString(res.prx_dbm, 2)},
       {k: 'Sensitivity (dBm)', v: safeFixedString(res.sens_dbm, 2)},
       {k: 'Margin (dB)', v: safeFixedString(res.margin_db, 2)},
       {k: 'Max reach (km)', v: (maxReach/1000).toFixed(2)}
     ];
     const html = rows.map(r => `<div class="term"><span>${r.k}</span><span>${r.v}</span></div>`).join('');
-    const geoInsight = `Geometric gain reflects aperture/array capture. If margin is low, increase capture area or receiver sensitivity.`;
-    return `<h4>Max Distance Explained</h4><p>We integrate Tx power, optical losses, atmospheric effects, and receiver sensitivity. Max distance is where post-FEC BER meets the target (${state.config.global.target_ber}). ${geoInsight}</p><div class="term-list">${html}</div>`;
+
+    const captureText = (capture != null) ? `Effective capture at this range is ${(capture*100).toFixed(1)}%. ` : '';
+
+    let cause = '';
+    if(res.margin_db < 0){
+      cause = 'Range is limited by received power vs. sensitivity (noise budget). ';
+    }
+    if(capture != null && capture < 0.2){
+      cause = 'Range is limited by alignment/capture (residual pointing too high for the lens size). ';
+    }
+
+    const algo = `How it is computed: we form a Gaussian-beam radius at the range plane; we then estimate residual pointing RMS from the control loops (gimbal/FSM bandwidth targets derived from wind and Cn² via Greenwood frequency, combined with your PSD and max jitter to get σ). Expected capture is the Gaussian–aperture overlap penalized by exp(−2·(σ/w)²). That capture scales geometric gain and adds pointing loss. BER and max distance are then evaluated from the resulting received power vs. receiver sensitivity (with FEC).`;
+
+    const overview = `${captureText}${cause}${algo}`;
+    return `<h4>Max Distance Explained</h4><p>${overview}</p><div class="term-list">${html}</div>`;
   }
 
   function applyTooltips(db){
@@ -1477,7 +1497,33 @@
       const okAt = (L) => {
         const cfg = JSON.parse(JSON.stringify(config));
         cfg.global.distance_m = Math.max(L, 0);
+        // First pass to get beam radius and conditions
+        const r0 = window.Calc.Evaluator.evaluate(selDb, cfg);
+        // Recompute residual pointing based on wind/PSD and actuator targets
+        if(window.Calc && window.Calc.Control){
+          const act = window.Calc.Control.estimateActuatorBandwidthTargets(
+            cfg.global.wavelength_nm,
+            cfg.global.distance_m,
+            cfg.channel.Cn2,
+            cfg.channel.wind_mps
+          );
+          const psdRes = window.Calc.Control.estimateResidualPointingFromPsd(
+            cfg.channel.psd_low_mrad2_Hz || 0.0001,
+            cfg.channel.psd_high_mrad2_Hz || 0.00005,
+            cfg.channel.psd_split_hz || 100,
+            cfg.channel.jitter_max_hz || 1000,
+            act ? act.gimbal_bw_hz : 0,
+            act ? act.fsm_bw_hz : 0
+          );
+          cfg.channel.pointing_jitter_mrad_rms = psdRes && psdRes.sigma_mrad != null ? psdRes.sigma_mrad : (cfg.channel.pointing_jitter_mrad_rms || 0);
+        }
+        // Re-evaluate with residual jitter for capture/pointing loss
         const r = window.Calc.Evaluator.evaluate(selDb, cfg);
+        // Enforce alignment lock: require minimum capture to consider link viable
+        const minCapture = (cfg.global && typeof cfg.global.min_capture_for_lock === 'number') ? Math.max(Math.min(cfg.global.min_capture_for_lock,1),0) : 0.2;
+        if(r && r.misc && typeof r.misc.capture_frac === 'number' && r.misc.capture_frac < minCapture){
+          return false;
+        }
         const berRes = window.Calc.BER.estimatePostFecBer({
           receivedPower_dbm: r.prx_dbm,
           rosa,
