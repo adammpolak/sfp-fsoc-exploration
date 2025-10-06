@@ -1131,6 +1131,14 @@
           compHeaderEl.addEventListener('click', (e) => {
             if(e && e.stopPropagation) e.stopPropagation();
             toggleComponent(componentKey);
+            // Also show component in inspector
+            const cat = state.db.categories.find(cat => cat.type === c.type);
+            if(cat){
+              const model = cat.models.find(m => m.id === comp.id);
+              if(model){
+                renderInspector(c.type, model);
+              }
+            }
           });
         }
         
@@ -1591,7 +1599,7 @@
   }
 
   function renderKPIs(){
-    const kpiBox = document.getElementById('kpis');
+      const kpiBox = document.getElementById('kpis');
       const warnBox = document.getElementById('warnings');
     const maxPanel = document.getElementById('maxReachExplain');
     if(warnBox) warnBox.innerHTML = '';
@@ -1639,7 +1647,7 @@
     const fsmOk = fsm ? (fsm.bandwidth_hz >= (ctrl ? ctrl.fsm_bw_hz : 0) && fsm.resolution_urad <= (ctrl ? ctrl.resolution_urad : Infinity) && fsm.range_mrad >= (ctrl ? ctrl.range_mrad : 0)) : true;
     const gimOk = gim ? (gim.bandwidth_hz >= (ctrl ? ctrl.gimbal_bw_hz : 0) && gim.resolution_mrad <= (ctrl ? ctrl.range_mrad : Infinity)) : true;
     const berMetrics = res ? computeBerMetrics(res) : null;
-    const kpis = {
+      const kpis = {
       cost_usd: sumField('cost_usd'),
       weight_g: sumField('weight_g'),
       power_w: sumField('power_w'),
@@ -2117,6 +2125,8 @@
     const txColumn = document.getElementById('txGroups');
     if(txColumn){
       container.innerHTML = txColumn.innerHTML;
+      // Rebind click handlers for mobile
+      bindMobileComponentHandlers(container);
     }
   }
 
@@ -2127,6 +2137,8 @@
     const channelColumn = document.getElementById('channelGroups');
     if(channelColumn){
       container.innerHTML = channelColumn.innerHTML;
+      // Rebind click handlers for mobile
+      bindMobileComponentHandlers(container);
     }
   }
 
@@ -2137,6 +2149,8 @@
     const rxColumn = document.getElementById('rxGroups');
     if(rxColumn){
       container.innerHTML = rxColumn.innerHTML;
+      // Rebind click handlers for mobile
+      bindMobileComponentHandlers(container);
     }
   }
 
@@ -2169,6 +2183,55 @@
       container.innerHTML = desktopPartsList.innerHTML;
     }
   }
+
+  function bindMobileComponentHandlers(container){
+    const componentHeaders = container.querySelectorAll('.component-header');
+    componentHeaders.forEach(header => {
+      // Extract component info from the header text
+      const titleEl = header.querySelector('.component-title');
+      if(!titleEl) return;
+      
+      const titleText = titleEl.textContent;
+      const parts = titleText.split(' • ');
+      if(parts.length < 2) return;
+      
+      const componentLabel = parts[0];
+      const componentId = parts[1];
+      
+      // Find the component type from COLUMN_LAYOUT
+      let componentType = null;
+      for(const column of COLUMN_LAYOUT){
+        for(const group of column.groups){
+          for(const comp of group.components){
+            if(comp.label === componentLabel){
+              componentType = comp.type;
+              break;
+            }
+          }
+          if(componentType) break;
+        }
+        if(componentType) break;
+      }
+      
+      if(componentType){
+        header.addEventListener('click', (e) => {
+          if(e && e.stopPropagation) e.stopPropagation();
+          
+          // Find the category and model
+          const cat = state.db.categories.find(cat => cat.type === componentType);
+          if(cat){
+            const model = cat.models.find(m => m.id === componentId);
+            if(model){
+              renderInspector(componentType, model);
+            }
+          }
+        });
+      }
+    });
+  }
+
+  // Expose renderInspector globally for canvas component clicks
+  window.renderInspector = renderInspector;
 })();
 
 
