@@ -330,6 +330,9 @@
     // Keep a snapshot of initial DB for revert
     state.initialDb = JSON.parse(JSON.stringify(state.db));
     state.config = loadSession() || defaultConfig;
+    // Defaults: zoom lens and play jitter on
+    state.beam.zoomToLens = true;
+    state.beam.jitterActive = true;
     bindToolbar();
     initSelectionFromDb();
     renderPartsList();
@@ -338,37 +341,15 @@
     bindTabs();
     const zoomToggle = document.getElementById('beamZoomToggle');
     if(zoomToggle){
-      zoomToggle.addEventListener('click', () => {
-        state.beam.zoomToLens = !state.beam.zoomToLens;
-        zoomToggle.classList.toggle('active', state.beam.zoomToLens);
-        renderCanvas();
-      });
+      zoomToggle.classList.toggle('active', state.beam.zoomToLens);
     }
     const jitterToggle = document.getElementById('beamJitterToggle');
     if(jitterToggle){
-      jitterToggle.addEventListener('click', () => {
-        state.beam.jitterActive = !state.beam.jitterActive;
-        jitterToggle.classList.toggle('active', state.beam.jitterActive);
-        if(state.beam.jitterActive){
-          initBeamJitterAnimation();
-        } else {
-          stopBeamJitter();
-        }
-      });
+      jitterToggle.classList.toggle('active', state.beam.jitterActive);
     }
     const autoAlignToggle = document.getElementById('beamAutoAlign');
     if(autoAlignToggle){
-      autoAlignToggle.checked = state.beam.autoAlign;
-      autoAlignToggle.addEventListener('change', () => {
-        state.beam.autoAlign = autoAlignToggle.checked;
-        if(!state.beam.autoAlign){
-          stopBeamJitter();
-          state.beam.jitterActive = false;
-          jitterToggle && jitterToggle.classList.remove('active');
-        } else if(state.beam.jitterActive){
-          initBeamJitterAnimation();
-        }
-      });
+      autoAlignToggle.checked = state.beam.autoAlign !== false;
     }
   });
 
@@ -708,9 +689,19 @@
 
   function renderAll(){
     renderCanvas();
+    renderMobileCanvas();
+    bindBeamControls();
+    bindMobileControls();
     renderKPIs();
     renderPlots();
     renderStageBreakdown();
+    // Ensure autoplay after metrics/control residuals are available
+    if(state.beam.jitterActive && state.beam.svgRefs && !state.beam.animation){
+      beamLog('Autoplay guard starting animation (post-KPIs)', { hasRefs: !!state.beam.svgRefs, anim: !!state.beam.animation });
+      initBeamJitterAnimation();
+    } else {
+      beamLog('Autoplay guard skipped (post-KPIs)', { jitterActive: state.beam.jitterActive, hasRefs: !!state.beam.svgRefs, anim: !!state.beam.animation });
+    }
   }
 
   function renderPartsList(filterTerm){
@@ -1257,6 +1248,7 @@
       state.beam.profile = null;
       state.beam.svgRefs = null;
       if(readout) readout.textContent = 'Capture: —';
+      beamLog('renderBeamVisual: no profile available');
       return null;
     }
     container.style.display = 'block';
@@ -1265,21 +1257,10 @@
     const profile = zoomMode
       ? (targetEval.beam_profile_zoom || targetEval.beam_profile)
       : (maxEval && maxEval.eval && maxEval.eval.beam_profile ? maxEval.eval.beam_profile : currentEval.beam_profile);
+    beamLog('renderBeamVisual: using profile', { zoomMode, windowStart: profile.geometry.windowStart_m, windowEnd: profile.geometry.windowEnd_m });
     const distanceLabelKm = maxEval ? (maxEval.distance_m/1000).toFixed(2) : (currentDistance/1000).toFixed(2);
 
     let svgString = profile.svg.replace('##DIST_KM##', distanceLabelKm);
-    if(maxEval && maxEval.eval && maxEval.eval.beam_profile){
-      const divMax = maxEval.eval.beam_profile.divergence_mrad != null ? maxEval.eval.beam_profile.divergence_mrad.toFixed(2) : null;
-      if(divMax){
-        svgString = svgString.replace('##DIV_MRAD##', divMax);
-      }
-    }
-    const divCurr = currentEval.beam_profile.divergence_mrad != null ? currentEval.beam_profile.divergence_mrad.toFixed(2) : null;
-    if(divCurr){
-      svgString = svgString.replace('##DIV_MRAD##', divCurr);
-    }
-    /* compatibility with updated SVG that has no placeholder */
-
     const parser = new DOMParser();
     const doc = parser.parseFromString(svgString, 'image/svg+xml');
     const svgEl = doc.documentElement;
@@ -1288,31 +1269,72 @@
       svgEl.setAttribute('width', '100%');
       svgEl.setAttribute('height', '100%');
       svgEl.removeAttribute('xmlns:xlink');
-      const lensOverlay = doc.querySelector('#lensOverlay');
-      let captureOverlay = doc.querySelector('#captureOverlay');
-      if(!captureOverlay){
-        captureOverlay = doc.createElementNS(SVG_NS, 'circle');
-        captureOverlay.setAttribute('id', 'captureOverlay');
-        captureOverlay.setAttribute('fill', 'rgba(15,118,110,0.35)');
-        captureOverlay.setAttribute('stroke', 'none');
-        captureOverlay.setAttribute('visibility', 'hidden');
-        const envelopeGroup = doc.querySelector('#beamEnvelopeGroup');
-        if(envelopeGroup && envelopeGroup.parentNode){
-          envelopeGroup.parentNode.insertBefore(captureOverlay, envelopeGroup.nextSibling);
-        } else {
-          doc.documentElement.appendChild(captureOverlay);
+
+      const oldEnv = svgEl.querySelector('#beamEnvelope');
+      if(oldEnv) oldEnv.setAttribute('visibility', 'hidden');
+      const oldLens = svgEl.querySelector('#lensOverlay');
+      if(oldLens) oldLens.setAttribute('visibility', 'hidden');
+
+      const g = profile.geometry;
+      const xStart = g.marginX;
+      const xEnd = g.marginX + (g.windowEnd_m - g.windowStart_m) * g.scale_px_per_m;
+      const midY = g.midY;
+      const wEndPx = g.beam_radius_at_end_m * g.scale_px_per_m;
+      const xTip = g.marginX + (0 - g.windowStart_m) * g.scale_px_per_m;
+      const m = (wEndPx) / Math.max((xEnd - xTip), 1e-6);
+      const wLeftPx = m * Math.max(xStart - xTip, 0);
+      const yTopStart = midY - wLeftPx;
+      const yBotStart = midY + wLeftPx;
+      const yTopEnd = midY - wEndPx;
+      const yBotEnd = midY + wEndPx;
+
+      const beamTri = doc.createElementNS(SVG_NS, 'path');
+      beamTri.setAttribute('id', 'beamTriangle');
+      beamTri.setAttribute('d', `M ${xStart.toFixed(2)} ${yTopStart.toFixed(2)} L ${xEnd.toFixed(2)} ${yTopEnd.toFixed(2)} L ${xEnd.toFixed(2)} ${yBotEnd.toFixed(2)} L ${xStart.toFixed(2)} ${yBotStart.toFixed(2)} Z`);
+      beamTri.setAttribute('fill', 'rgba(59,130,246,0.28)');
+      beamTri.setAttribute('stroke', 'rgba(59,130,246,0.7)');
+      beamTri.setAttribute('stroke-width', '2');
+      svgEl.appendChild(beamTri);
+
+      const lensHeight_m = (() => {
+        const arr = getSelected('receiver_array');
+        if(arr && Number(arr.count||0) > 0){
+          if(arr.envelope_height_mm) return arr.envelope_height_mm * 1e-3;
+          if(arr.envelope_diameter_mm) return arr.envelope_diameter_mm * 1e-3;
+          if(arr.sub_aperture_mm) return arr.sub_aperture_mm * 1e-3;
         }
-      }
+        const obj = getSelected('receiver_objective');
+        if(obj && obj.aperture_mm) return obj.aperture_mm * 1e-3;
+        return g.lens_radius_at_end_m ? g.lens_radius_at_end_m * 2 : (g.beam_radius_at_end_m * 2);
+      })();
+      const lensHeightPx = Math.max(lensHeight_m * g.scale_px_per_m, 2);
+      const lensX = xEnd - 1;
+      const lensY = midY - lensHeightPx/2;
+      const lensGroup = doc.createElementNS(SVG_NS, 'g');
+      lensGroup.setAttribute('id', 'lensGroup');
+      const lensRect = doc.createElementNS(SVG_NS, 'rect');
+      lensRect.setAttribute('id', 'lensBar');
+      lensRect.setAttribute('x', lensX.toFixed(2));
+      lensRect.setAttribute('y', lensY.toFixed(2));
+      lensRect.setAttribute('width', '3');
+      lensRect.setAttribute('height', lensHeightPx.toFixed(2));
+      lensRect.setAttribute('fill', 'rgba(107,114,128,0.85)');
+      lensRect.setAttribute('stroke', 'rgba(55,65,81,0.9)');
+      lensRect.setAttribute('stroke-width', '1');
+      lensGroup.appendChild(lensRect);
+      svgEl.appendChild(lensGroup);
+
       container.appendChild(svgEl);
       state.beam.svgRefs = {
         svg: svgEl,
-        envelope: svgEl.querySelector('#beamEnvelope'),
-        lens: lensOverlay,
-        capture: captureOverlay,
+        envelope: beamTri,
+        lens: lensGroup,
+        capture: null,
         geometry: profile.geometry,
         windowStart: profile.window_start_m,
         windowEnd: profile.window_end_m
       };
+      beamLog('renderBeamVisual: svgRefs set', { haveRefs: !!state.beam.svgRefs, geom: profile.geometry });
       state.beam.profile = profile;
       if(zoomMode){
         requestAnimationFrame(() => {
@@ -1321,6 +1343,7 @@
       }
       updateBeamCaptureReadout(profile, 0);
       if(state.beam.jitterActive && profile && profile.geometry && state.beam.autoAlign !== false){
+        beamLog('renderBeamVisual: starting jitter from render');
         initBeamJitterAnimation();
       } else {
         stopBeamJitter();
@@ -1376,6 +1399,7 @@
     if(state.beam.animation){
       cancelAnimationFrame(state.beam.animation);
       state.beam.animation = null;
+      beamLog('Jitter stopped');
     }
     const refs = state.beam.svgRefs;
     if(refs && refs.envelope){
@@ -1388,52 +1412,41 @@
     stopBeamJitter();
     const refs = state.beam.svgRefs;
     const profile = state.beam.profile;
-    if(!refs || !profile || !profile.geometry) return;
-
-    const { svg, geometry, capture } = refs;
-    const beamRadius = beamRadiusPx(profile);
-    const lensRadius = lensRadiusPx(profile);
-    const lensCenterX = geometry.marginX + (geometry.windowEnd_m - geometry.windowStart_m) * geometry.scale_px_per_m;
-    const lensCenterY = geometry.midY;
-
-    let beamDot = svg.querySelector('#beamCentroid');
-    if(!beamDot){
-      beamDot = document.createElementNS(SVG_NS, 'circle');
-      beamDot.setAttribute('id', 'beamCentroid');
-      beamDot.setAttribute('r', Math.max(beamRadius * 0.2, 2));
-      beamDot.setAttribute('fill', 'rgba(59,130,246,0.9)');
-      beamDot.setAttribute('stroke', '#1d4ed8');
-      beamDot.setAttribute('stroke-width', '1');
-      svg.appendChild(beamDot);
+    if(!refs || !profile || !profile.geometry){
+      beamLog('initBeamJitterAnimation: missing refs/profile', { refs: !!refs, profile: !!profile });
+      return;
     }
 
-    let lensDot = svg.querySelector('#lensCentroid');
-    if(!lensDot){
-      lensDot = document.createElementNS(SVG_NS, 'circle');
-      lensDot.setAttribute('id', 'lensCentroid');
-      lensDot.setAttribute('r', Math.max(lensRadius * 0.25, 2));
-      lensDot.setAttribute('fill', 'rgba(13,148,136,0.35)');
-      lensDot.setAttribute('stroke', '#0f766e');
-      lensDot.setAttribute('stroke-width', '1');
-      svg.appendChild(lensDot);
+    // Check if we're on mobile and use mobile SVG
+    const isMobile = window.innerWidth <= 768;
+    const svgContainer = isMobile ? document.getElementById('mobileBeamVisual') : document.getElementById('beamVisual');
+    const svg = svgContainer ? svgContainer.querySelector('svg') : null;
+    
+    if(!svg){
+      beamLog('initBeamJitterAnimation: no SVG found for', isMobile ? 'mobile' : 'desktop');
+      return;
     }
 
-    if(capture){
-      capture.setAttribute('cx', lensCenterX.toFixed(2));
-      capture.setAttribute('cy', lensCenterY.toFixed(2));
-      capture.setAttribute('r', lensRadius.toFixed(2));
-      capture.setAttribute('visibility', 'visible');
+    const { geometry } = refs;
+    const lensGroup = svg.querySelector('#lensGroup');
+    const lensBar = lensGroup ? lensGroup.querySelector('#lensBar') : null;
+    if(!svg || !lensGroup || !lensBar){
+      beamLog('initBeamJitterAnimation: missing svg/lens elements', { svg: !!svg, lensGroup: !!lensGroup, lensBar: !!lensBar });
+      return;
     }
 
-    const readout = document.getElementById('beamCaptureReadout');
+    const midY = geometry.midY;
+    const lensHeight = Number(lensBar.getAttribute('height')) || 2;
 
     const durationMs = 6000;
     const frameHz = 60;
     const totalFrames = Math.floor(durationMs / (1000/frameHz));
 
     const residual = computePointingResidual();
+    beamLog('initBeamJitterAnimation: start', { residual, scale: geometry.scale_px_per_m });
     const txSeries = synthesizeJitterSeries(residual.tx, totalFrames);
     const rxSeries = synthesizeJitterSeries(residual.rx, totalFrames);
+    beamLog(`initBeamJitterAnimation: series generated {txLen: ${txSeries.length}, rxLen: ${rxSeries.length}, txSample: ${txSeries[0]}, rxSample: ${rxSeries[0]}}`);
 
     let frame = 0;
     const manualSigma = state.config.channel.manual_jitter_mrad || 0;
@@ -1450,25 +1463,12 @@
       const relative = (tx + manual) - rx;
 
       const offsetPx = relative * geometry.scale_px_per_m;
-      const beamCx = lensCenterX;
-      const beamCy = lensCenterY + offsetPx;
+      const lensY = (midY - lensHeight/2) - offsetPx;
+      lensBar.setAttribute('y', lensY.toFixed(2));
 
-      beamDot.setAttribute('cx', beamCx.toFixed(2));
-      beamDot.setAttribute('cy', beamCy.toFixed(2));
-
-      lensDot.setAttribute('cx', lensCenterX.toFixed(2));
-      lensDot.setAttribute('cy', lensCenterY.toFixed(2));
+      if(frame === 0){ beamLog('first frame', { tx, rx, relative, offsetPx }); }
 
       const captureFraction = updateBeamCaptureReadout(profile, Math.abs(relative));
-      if(capture){
-        capture.setAttribute('fill', `rgba(15,118,110,${0.15 + 0.55 * captureFraction})`);
-      }
-      checkAlignmentLock();
-      if(readout){
-        readout.textContent = `Capture: ${(captureFraction*100).toFixed(1)}%`;
-      }
-      state.beam.capture.fraction = captureFraction;
-
       frame++;
       state.beam.animation = requestAnimationFrame(animate);
     };
@@ -1619,6 +1619,10 @@
       act ? act.gimbal_bw_hz : 0,
       act ? act.fsm_bw_hz : 0
     ) : null;
+    // Sync residual jitter into config so Evaluator/capture/summary use the same sigma
+    if(psdRes && typeof psdRes.sigma_mrad === 'number'){
+      state.config.channel.pointing_jitter_mrad_rms = psdRes.sigma_mrad;
+    }
     state.metrics.controlResidual = psdRes ? {
       tx: { sigma_mrad: (psdRes.sigma_mrad || 0), bandwidth_hz: act ? act.gimbal_bw_hz || 10 : 10 },
       rx: { sigma_mrad: (psdRes.sigma_mrad || 0) * 0.8, bandwidth_hz: act ? act.fsm_bw_hz || 50 : 50 }
@@ -1921,32 +1925,36 @@
     const bw = Math.max(bandwidth_hz || 5, 0.5);
     const dt = 1/60;
     const alpha = Math.exp(-2*Math.PI*bw*dt);
+    const distance_m = state.config.global.distance_m || 1000; // Use config distance, not beam state
     const out = [];
     let stateVal = sigma_rad * (Math.random()-0.5);
     for(let i=0;i<totalFrames;i++){
       const noise = sigma_rad * (Math.random()-Math.random());
       stateVal = alpha * stateVal + (1-alpha) * noise;
-      out.push(stateVal * (state.beam.distance_m || 0));
+      out.push(stateVal * distance_m);
     }
     return out;
   }
 
   function computePointingResidual(){
     const res = state.metrics.controlResidual;
-    if(res) return res;
-    const ctrl = state.metrics.controlRaw;
-    if(ctrl){
-      const sigma = state.config.channel.pointing_jitter_mrad_rms || 0.2;
-      return {
-        tx: { sigma_mrad: sigma * 0.5, bandwidth_hz: ctrl.gimbal_bw_hz || 10 },
-        rx: { sigma_mrad: sigma * 0.5, bandwidth_hz: ctrl.fsm_bw_hz || 50 }
-      };
+    if(res && res.tx && res.rx){
+      const txSigma = res.tx.sigma_mrad || 0;
+      const rxSigma = res.rx.sigma_mrad || 0;
+      if(txSigma > 0 || rxSigma > 0){
+        beamLog(`computePointingResidual: using control residual {tx: ${txSigma}, rx: ${rxSigma}}`);
+        return res;
+      }
+      beamLog('computePointingResidual: control residual zero, falling back to config');
     }
-    const sigma = state.config.channel.pointing_jitter_mrad_rms || 0.2;
-    return {
-      tx: { sigma_mrad: sigma, bandwidth_hz: 5 },
-      rx: { sigma_mrad: sigma, bandwidth_hz: 20 }
+    const ctrl = state.metrics.controlRaw;
+    const baseSigma = state.config.channel.pointing_jitter_mrad_rms || 0.2;
+    const fallback = {
+      tx: { sigma_mrad: baseSigma * 0.5, bandwidth_hz: (ctrl && ctrl.gimbal_bw_hz) || 10 },
+      rx: { sigma_mrad: baseSigma * 0.5, bandwidth_hz: (ctrl && ctrl.fsm_bw_hz) || 50 }
     };
+    beamLog(`computePointingResidual: using fallback {tx: ${fallback.tx.sigma_mrad}, rx: ${fallback.rx.sigma_mrad}}`);
+    return fallback;
   }
 
   function gaussianCaptureFraction(offset_m, profile){
@@ -1960,7 +1968,9 @@
   }
 
   function updateBeamCaptureReadout(profile, offset_m){
-    const readout = document.getElementById('beamCaptureReadout');
+    const isMobile = window.innerWidth <= 768;
+    const readoutId = isMobile ? 'mobileBeamCaptureReadout' : 'beamCaptureReadout';
+    const readout = document.getElementById(readoutId);
     if(!readout) return;
     const frac = gaussianCaptureFraction(offset_m || 0, profile);
     readout.textContent = `Capture: ${(frac * 100).toFixed(1)}%`;
@@ -1996,6 +2006,167 @@
     state.ui.extraWarnings = state.ui.extraWarnings || [];
     if(!state.ui.extraWarnings.includes(msg)){
       state.ui.extraWarnings.push(msg);
+    }
+  }
+
+  // Debug logging helper
+  window.DEBUG_BEAM = true;
+  function beamLog(){
+    try{
+      if(window.DEBUG_BEAM){
+        const args = Array.prototype.slice.call(arguments);
+        args.unshift('[Beam]');
+        console.log.apply(console, args);
+      }
+    } catch(_e){ /* ignore */ }
+  }
+
+  function bindBeamControls(){
+    // Desktop controls
+    const zoomToggle = document.getElementById('beamZoomToggle');
+    const jitterToggle = document.getElementById('beamJitterToggle');
+    const autoAlignToggle = document.getElementById('beamAutoAlign');
+    
+    // Mobile controls
+    const mobileZoomToggle = document.getElementById('mobileBeamZoomToggle');
+    const mobileJitterToggle = document.getElementById('mobileBeamJitterToggle');
+    const mobileAutoAlignToggle = document.getElementById('mobileBeamAutoAlign');
+
+    function bindToggle(toggle, isMobile = false){
+      if(toggle && !toggle.dataset.bound){
+        toggle.addEventListener('click', () => {
+          state.beam.zoomToLens = !state.beam.zoomToLens;
+          beamLog('Zoom toggled ->', state.beam.zoomToLens);
+          toggle.classList.toggle('active', state.beam.zoomToLens);
+          renderCanvas();
+        });
+        toggle.dataset.bound = '1';
+      }
+      if(toggle){ toggle.classList.toggle('active', !!state.beam.zoomToLens); }
+    }
+
+    function bindJitterToggle(toggle, isMobile = false){
+      if(toggle && !toggle.dataset.bound){
+        toggle.addEventListener('click', () => {
+          state.beam.jitterActive = !state.beam.jitterActive;
+          beamLog('Jitter toggled ->', state.beam.jitterActive);
+          toggle.classList.toggle('active', state.beam.jitterActive);
+          if(state.beam.jitterActive){
+            if(!state.beam.svgRefs){
+              beamLog('Jitter on but svgRefs missing, rendering canvas first');
+              renderCanvas();
+            }
+            initBeamJitterAnimation();
+          } else {
+            stopBeamJitter();
+          }
+        });
+        toggle.dataset.bound = '1';
+      }
+      if(toggle){ toggle.classList.toggle('active', !!state.beam.jitterActive); }
+    }
+
+    function bindAutoAlignToggle(toggle, isMobile = false){
+      if(toggle && !toggle.dataset.bound){
+        toggle.addEventListener('change', () => {
+          state.beam.autoAlign = toggle.checked;
+          beamLog('AutoAlign changed ->', state.beam.autoAlign);
+          if(state.beam.jitterActive){
+            initBeamJitterAnimation();
+          }
+        });
+        toggle.dataset.bound = '1';
+      }
+      if(toggle){ toggle.checked = state.beam.autoAlign !== false; }
+    }
+
+    // Bind all controls
+    bindToggle(zoomToggle);
+    bindToggle(mobileZoomToggle);
+    bindJitterToggle(jitterToggle);
+    bindJitterToggle(mobileJitterToggle);
+    bindAutoAlignToggle(autoAlignToggle);
+    bindAutoAlignToggle(mobileAutoAlignToggle);
+  }
+
+  function bindMobileControls(){
+    const configToggle = document.getElementById('configToggle');
+    if(configToggle && !configToggle.dataset.bound){
+      configToggle.addEventListener('click', () => {
+        const toolbar = document.querySelector('.toolbar');
+        toolbar.classList.toggle('show-controls');
+      });
+      configToggle.dataset.bound = '1';
+    }
+  }
+
+  function renderMobileCanvas(){
+    // Render mobile sections using the same data as desktop
+    renderMobileTxGroups();
+    renderMobileChannelGroups();
+    renderMobileRxGroups();
+    renderMobileBeamVisual();
+    renderMobileMaxReach();
+    renderMobilePartsList();
+  }
+
+  function renderMobileTxGroups(){
+    const container = document.getElementById('mobileTxGroups');
+    if(!container) return;
+    
+    const txColumn = document.getElementById('txGroups');
+    if(txColumn){
+      container.innerHTML = txColumn.innerHTML;
+    }
+  }
+
+  function renderMobileChannelGroups(){
+    const container = document.getElementById('mobileChannelGroups');
+    if(!container) return;
+    
+    const channelColumn = document.getElementById('channelGroups');
+    if(channelColumn){
+      container.innerHTML = channelColumn.innerHTML;
+    }
+  }
+
+  function renderMobileRxGroups(){
+    const container = document.getElementById('mobileRxGroups');
+    if(!container) return;
+    
+    const rxColumn = document.getElementById('rxGroups');
+    if(rxColumn){
+      container.innerHTML = rxColumn.innerHTML;
+    }
+  }
+
+  function renderMobileBeamVisual(){
+    const container = document.getElementById('mobileBeamVisual');
+    if(!container) return;
+    
+    const desktopBeamVisual = document.getElementById('beamVisual');
+    if(desktopBeamVisual){
+      container.innerHTML = desktopBeamVisual.innerHTML;
+    }
+  }
+
+  function renderMobileMaxReach(){
+    const container = document.getElementById('mobileMaxReachExplain');
+    if(!container) return;
+    
+    const desktopMaxReach = document.getElementById('maxReachExplain');
+    if(desktopMaxReach){
+      container.innerHTML = desktopMaxReach.innerHTML;
+    }
+  }
+
+  function renderMobilePartsList(){
+    const container = document.getElementById('mobilePartsList');
+    if(!container) return;
+    
+    const desktopPartsList = document.getElementById('partsList');
+    if(desktopPartsList){
+      container.innerHTML = desktopPartsList.innerHTML;
     }
   }
 })();

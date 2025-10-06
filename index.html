@@ -9,6 +9,7 @@
   <body>
     <header class="toolbar">
       <div class="brand">FSOC SFP Simulator</div>
+      <button id="configToggle" class="config-toggle">Config</button>
       <div class="controls">
         <label>Bitrate
           <select id="bitrate">
@@ -68,12 +69,85 @@
       </div>
     </header>
     <main class="layout">
-      <aside class="sidebar left">
+      <!-- Mobile-first vertical layout -->
+      <section class="mobile-section" id="mobile-beam-visual">
+        <h3 class="section-title">Free-Space Channel</h3>
+        <div id="mobileBeamVisual" class="beam-visual"></div>
+        <div class="beam-controls">
+          <button id="mobileBeamZoomToggle">Zoom Lens</button>
+          <button id="mobileBeamJitterToggle">Play Jitter</button>
+          <label class="beam-toggle"><input type="checkbox" id="mobileBeamAutoAlign" checked> Auto Align</label>
+        </div>
+        <div id="mobileBeamCaptureReadout" class="beam-readout">Capture: —</div>
+      </section>
+
+      <section class="mobile-section" id="mobile-tx-column">
+        <h3 class="section-title">Transmitter</h3>
+        <div id="mobileTxGroups" class="groups-container"></div>
+      </section>
+
+      <section class="mobile-section" id="mobile-channel-effects">
+        <h3 class="section-title">Free Space Effects</h3>
+        <div id="mobileChannelGroups" class="groups-container"></div>
+      </section>
+
+      <section class="mobile-section" id="mobile-rx-column">
+        <h3 class="section-title">Receiver</h3>
+        <div id="mobileRxGroups" class="groups-container"></div>
+      </section>
+
+      <section class="mobile-section" id="mobile-max-reach">
+        <div id="mobileMaxReachExplain" class="summary-panel"></div>
+      </section>
+
+      <aside class="mobile-section" id="mobile-parts">
+        <h3 class="section-title">Parts</h3>
+        <input id="mobileSearchParts" placeholder="Search components">
+        <div id="mobilePartsList"></div>
+      </aside>
+
+      <aside class="mobile-section" id="mobile-properties">
+        <div class="props-section">
+          <div class="tab-container">
+            <div class="tab-header">
+              <button class="tab-button active" data-tab="properties">Properties</button>
+              <button class="tab-button" data-tab="metrics">Key Metrics</button>
+              <button class="tab-button" data-tab="plots">Plots</button>
+              <button class="tab-button" data-tab="gain">Gain / Loss</button>
+            </div>
+            <div class="tab-panels">
+              <div id="tab-properties" class="tab-panel active">
+                <div id="warnings"></div>
+                <div id="inspector"></div>
+              </div>
+              <div id="tab-metrics" class="tab-panel">
+                <div id="kpis" class="tab-section"></div>
+              </div>
+              <div id="tab-plots" class="tab-panel">
+                <div class="plot-card">
+                  <h4>Received Power vs Distance</h4>
+                  <div id="prxPlot" class="plot-area"></div>
+                </div>
+                <div class="plot-card">
+                  <h4>BER vs Distance</h4>
+                  <div id="berPlot" class="plot-area"></div>
+                </div>
+              </div>
+              <div id="tab-gain" class="tab-panel">
+                <div id="stageBreakdown" class="tab-section"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Desktop layout (hidden on mobile) -->
+      <aside class="sidebar left desktop-only">
         <h3>Parts</h3>
         <input id="searchParts" placeholder="Search components">
         <div id="partsList"></div>
       </aside>
-      <section class="canvas">
+      <section class="canvas desktop-only">
         <div id="canvasGuide">
           <p>Left: transmitter blocks. Middle: channel effects. Right: receiver blocks. Click groups/components to expand details. Click arrows to expand/collapse.</p>
         </div>
@@ -85,12 +159,12 @@
             </div>
             <div class="channel-column column">
               <h3 class="column-title">Free-Space Channel</h3>
+              <div id="beamVisual" class="beam-visual"></div>
               <div class="beam-controls">
                 <button id="beamZoomToggle">Zoom Lens</button>
                 <button id="beamJitterToggle">Play Jitter</button>
                 <label class="beam-toggle"><input type="checkbox" id="beamAutoAlign" checked> Auto Align</label>
               </div>
-              <div class="beam-visual" id="beamVisual"></div>
               <div id="beamCaptureReadout" class="beam-readout">Capture: —</div>
               <div id="channelGroups" class="groups-container"></div>
             </div>
@@ -101,7 +175,7 @@
           </div>
         </div>
       </section>
-      <aside class="sidebar right">
+      <aside class="sidebar right desktop-only">
         <div class="props-section">
           <div class="tab-container">
             <div class="tab-header">

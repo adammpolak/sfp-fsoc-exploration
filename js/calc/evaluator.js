@@ -85,6 +85,11 @@
   function receiverApertureRadius_m(dbModels){
     const rxArray = findModel(dbModels, 'receiver_array');
     if(rxArray){
+      // Prefer explicit envelope dimensions if present
+      if(rxArray.envelope_height_mm || rxArray.envelope_width_mm){
+        const h = (rxArray.envelope_height_mm || rxArray.envelope_width_mm || 0) * 1e-3;
+        return 0.5 * h; // use vertical extent as effective radius for capture
+      }
       if(rxArray.envelope_diameter_mm){
         return 0.5 * rxArray.envelope_diameter_mm * 1e-3;
       }
